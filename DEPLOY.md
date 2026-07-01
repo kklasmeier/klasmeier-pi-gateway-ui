@@ -20,31 +20,59 @@ This repo is **not** part of Security-Camera-Central. The camera stack only need
 
 ---
 
-## Git workflow (day to day)
+## Git workflow (NFS + gitsync — same as Security-Camera-Central)
 
-### On Pi5Desktop (check-in)
-
-```bash
-cd ~/Programming/klasmeier-pi-gateway-ui
-git status
-git add …
-git commit -m "Describe change"
-git push
+```text
+Pi5Desktop (192.168.1.42)              PiSensors (192.168.1.26)
+────────────────────────              ─────────────────────────
+NFS mount:                             ~/klasmeier-pi-gateway-ui  (git repo)
+  /home/pi/klasmeier-pi-gateway-ui  ◄──  edit in Cursor on desktop
+       │
+  edit in Cursor
+       │
+  SSH to PiSensors → ./gitsync.sh     commit / push to GitHub
+                                      ./deploy.sh → /opt/pivpngateway-ui
 ```
 
-### On PiSensors (check-out + deploy)
+### Pi5Desktop — NFS mount (one-time)
+
+Add to `/etc/fstab` (see `deploy/nfs-pi5desktop-fstab.snippet` in klasmeier-pi-gateway repo):
+
+```fstab
+192.168.1.26:/home/pi/klasmeier-pi-gateway-ui /home/pi/klasmeier-pi-gateway-ui nfs4 rw,soft,timeo=5,retrans=1,_netdev,nofail,x-systemd.automount,x-systemd.device-timeout=10 0 0
+```
 
 ```bash
+sudo mkdir -p /home/pi/klasmeier-pi-gateway-ui
+sudo mount -a
+```
+
+Edit files at **`/home/pi/klasmeier-pi-gateway-ui`** on Pi5Desktop (same path as on PiSensors).
+
+### PiSensors — check in
+
+```bash
+ssh pi@192.168.1.26
 cd ~/klasmeier-pi-gateway-ui
-git pull
-sudo rsync -a app/ static/ requirements.txt /opt/pivpngateway-ui/
-sudo /opt/pivpngateway-ui/venv/bin/pip install -r /opt/pivpngateway-ui/requirements.txt
-sudo systemctl restart pivpngateway-ui
+./gitsync.sh
+./deploy.sh
 ```
 
-Or run `deploy/install-pisensors.sh` for a full sync (includes venv rebuild).
+### Day to day
 
-**Do not overwrite** `/etc/pivpngateway-ui/ui.env` on pull.
+1. Edit on Pi5Desktop via NFS (Cursor).
+2. SSH to PiSensors → `./gitsync.sh` to commit and push.
+3. `./deploy.sh` to sync clone → `/opt/pivpngateway-ui` and restart UI.
+
+---
+
+## Git workflow (legacy — Pi5Desktop-only git)
+
+<details>
+<summary>Older workflow if not using NFS</summary>
+
+Develop on Pi5Desktop, push from desktop, pull on PiSensors. See git history before NFS setup.
+</details>
 
 ---
 

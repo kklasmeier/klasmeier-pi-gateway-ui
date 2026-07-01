@@ -15,15 +15,10 @@ Standalone management UI for the home VPN gateway. Runs on **PiSensors** (192.16
 
 ## Deploy
 
-See **[DEPLOY.md](DEPLOY.md)** for git workflow, first-time install, secrets, and troubleshooting.
+See **[DEPLOY.md](DEPLOY.md)** for NFS + `gitsync.sh` workflow (same pattern as Security-Camera-Central).
 
-Quick update on PiSensors:
-
-```bash
-cd ~/klasmeier-pi-gateway-ui && git pull
-sudo rsync -a app/ static/ /opt/pivpngateway-ui/
-sudo systemctl restart pivpngateway-ui
-```
+**Edit** on Pi5Desktop: `/home/pi/klasmeier-pi-gateway-ui` (NFS from PiSensors)  
+**Git + deploy** on PiSensors: `./gitsync.sh` then `./deploy.sh`
 
 ## Configuration
 
