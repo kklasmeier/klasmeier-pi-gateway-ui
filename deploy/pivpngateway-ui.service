@@ -1,0 +1,16 @@
+[Unit]
+Description=Klasmeier Pi Gateway management UI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=pi
+Group=pi
+WorkingDirectory=/opt/pivpngateway-ui
+EnvironmentFile=-/etc/pivpngateway-ui/ui.env
+ExecStart=/opt/pivpngateway-ui/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8001
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
