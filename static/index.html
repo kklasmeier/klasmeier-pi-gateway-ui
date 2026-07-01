@@ -858,7 +858,7 @@ async function loadDevice(ip) {
         </div>
       </div>
       <div class="row notes-field"><label>Notes</label><textarea id="notes"></textarea></div>
-      <button onclick="saveDevice('${d.ip}')">Save</button>
+      <button type="button" id="save-device-btn" onclick="saveDevice('${d.ip}', event)">Save</button>
       <button class="secondary" onclick="location.hash='devices'">Back</button>
     </div>`;
 
