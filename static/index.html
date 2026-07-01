@@ -661,8 +661,13 @@ function openDeviceDetail(ip, event) {
   location.hash = 'device-' + ip;
 }
 
+function onDeviceRowDblClick(ip, event) {
+  if (event.target.closest('.toggle, .btn-detail, button, a')) return;
+  openDeviceDetail(ip, event);
+}
+
 function renderDeviceRows(devices) {
-  return devices.map(d => `<tr data-ip="${d.ip}">
+  return devices.map(d => `<tr data-ip="${d.ip}" ondblclick="onDeviceRowDblClick('${d.ip}', event)">
     <td>${esc(d.ip)}</td>
     <td>${esc(d.hostname)}</td>
     <td class="status-cell">${fmtStatusCell(d.connected)}</td>
