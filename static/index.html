@@ -886,7 +886,8 @@ async function loadDevice(ip) {
   }, POLL_MS);
 }
 
-async function saveDevice(ip) {
+async function saveDevice(ip, event) {
+  const btn = event?.target;
   const vpn = document.querySelector('input[name="vpn"]:checked');
   const pihole = document.querySelector('input[name="pihole"]:checked');
   const hostname = document.getElementById('device-hostname').value.trim();
@@ -894,6 +895,7 @@ async function saveDevice(ip) {
     document.getElementById('error').textContent = 'Hostname is required.';
     return;
   }
+  setBtnBusy(btn, true, 'Saving…');
   document.getElementById('error').textContent = '';
   const body = {
     hostname,
@@ -901,10 +903,15 @@ async function saveDevice(ip) {
     use_pihole: pihole ? pihole.value === 'true' : false,
     notes: document.getElementById('notes').value,
   };
-  await api('/devices/' + ip, { method:'PUT', body: JSON.stringify(body) });
-  showStatus(`Saved ${hostname} — registry and DHCP updated`);
-  sessionStorage.setItem('highlightIp', ip);
-  location.hash = 'devices';
+  try {
+    await api('/devices/' + ip, { method:'PUT', body: JSON.stringify(body) });
+    showStatus(`Saved ${hostname} — registry and DHCP updated`);
+    sessionStorage.setItem('highlightIp', ip);
+    location.hash = 'devices';
+  } catch (e) {
+    setBtnBusy(btn, false);
+    document.getElementById('error').textContent = e.message;
+  }
 }
 
 async function reserveDevice(ip, event) {
