@@ -36,6 +36,8 @@ NFS mount:                             ~/klasmeier-pi-gateway-ui  (git repo)
 
 ### Pi5Desktop — NFS mount (one-time)
 
+On **PiSensors**, export the clone (once): `sudo ./deploy/setup-nfs-export.sh`
+
 Add to `/etc/fstab` (see `deploy/nfs-pi5desktop-fstab.snippet` in klasmeier-pi-gateway repo):
 
 ```fstab
