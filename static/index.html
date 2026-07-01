@@ -40,7 +40,7 @@
     th, td { text-align:left; padding:10px 12px; border-bottom:1px solid #30363d; font-size:14px; vertical-align:middle; }
     th { color:var(--muted); font-weight:600; position:sticky; top:0; z-index:2; background:var(--panel); box-shadow:0 1px 0 #30363d; }
     thead th { border-bottom:1px solid #30363d; }
-    tr:hover { background:#22272e; cursor:pointer; }
+    tr:hover { background:#22272e; }
     tr.row-highlight { background:#2d4a22 !important; outline:1px solid var(--green); }
     td.notes-cell { color:var(--muted); font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:0; }
     td.date-cell { color:var(--muted); font-size:12px; white-space:nowrap; padding-left:16px; padding-right:16px; }
@@ -57,6 +57,10 @@
     td.date-cell .cell-empty { display:block; text-align:center; }
     td.toggle-cell { width:56px; text-align:center; cursor:default; }
     td.pihole-cell { width:56px; text-align:center; cursor:default; }
+    td.detail-cell { width:72px; text-align:center; white-space:nowrap; padding-left:8px; padding-right:8px; }
+    th.detail-col { width:72px; text-align:center; padding-left:8px; padding-right:8px; }
+    .btn-detail { display:inline-block; padding:4px 10px; font-size:12px; border-radius:6px; border:1px solid #30363d; background:#21262d; color:var(--accent); cursor:pointer; text-decoration:none; user-select:none; }
+    .btn-detail:hover { background:#30363d; border-color:var(--accent); }
     .toggle { display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px; border-radius:6px; border:1px solid #30363d; background:#0d1117; cursor:pointer; font-size:16px; user-select:none; }
     .toggle.on { color:var(--green); border-color:var(--green); }
     .toggle.off { color:var(--muted); }
@@ -652,8 +656,13 @@ function applyHighlight() {
   });
 }
 
+function openDeviceDetail(ip, event) {
+  if (event) event.stopPropagation();
+  location.hash = 'device-' + ip;
+}
+
 function renderDeviceRows(devices) {
-  return devices.map(d => `<tr data-ip="${d.ip}" onclick="location.hash='device-${d.ip}'">
+  return devices.map(d => `<tr data-ip="${d.ip}">
     <td>${esc(d.ip)}</td>
     <td>${esc(d.hostname)}</td>
     <td class="status-cell">${fmtStatusCell(d.connected)}</td>
@@ -666,6 +675,7 @@ function renderDeviceRows(devices) {
     <td class="rate-cell">${fmtRateCell(d.tx_bps)}</td>
     <td class="link-cell">${fmtLinkCell(d.link_type)}</td>
     <td class="notes-cell" title="${esc(d.notes||'')}">${esc(d.notes||'')}</td>
+    <td class="detail-cell"><button type="button" class="btn-detail" onclick="openDeviceDetail('${d.ip}', event)">Open</button></td>
   </tr>`).join('');
 }
 
@@ -736,6 +746,7 @@ async function loadDevices() {
         <th class="rate-col">↑ Mbps</th>
         <th class="link-col">Link</th>
         <th class="notes-col">Notes</th>
+        <th class="detail-col">Details</th>
       </tr></thead>
       <tbody>${renderDeviceRows(filtered)}</tbody>
     </table></div>`;
