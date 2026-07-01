@@ -829,6 +829,10 @@ async function loadDevice(ip) {
       </div>
     </div>
     <div class="card">
+      <div class="row"><label for="device-hostname">Hostname</label>
+        <input id="device-hostname" type="text" autocomplete="off" spellcheck="false" maxlength="64">
+        <p class="card-sub" style="margin:6px 0 0">Shown in the device list${d.reserved ? ' and written to the DHCP reservation' : ''}. Does not change the OS hostname on the device.</p>
+      </div>
       <div class="row"><label>Obscura VPN</label>
         ${gatewayLocked ? `<p style="color:var(--muted);font-size:13px;margin:0 0 8px">Gateway node — always routed via Obscura.</p>` : ''}
         ${!d.reserved && !vpnLocked && !gatewayLocked ? `<p style="color:var(--muted);font-size:13px;margin:0 0 8px">Reserve this device to enable routed VPN.</p>` : ''}
@@ -855,6 +859,8 @@ async function loadDevice(ip) {
 
   const notesEl = document.getElementById('notes');
   if (notesEl) notesEl.value = d.notes || '';
+  const hostnameEl = document.getElementById('device-hostname');
+  if (hostnameEl) hostnameEl.value = d.hostname || '';
 
   renderChart('dev-chart-rx', [
     { field: `dev:${ip}`, dir: 'rx', color: '#58a6ff' },
@@ -878,12 +884,20 @@ async function loadDevice(ip) {
 async function saveDevice(ip) {
   const vpn = document.querySelector('input[name="vpn"]:checked');
   const pihole = document.querySelector('input[name="pihole"]:checked');
+  const hostname = document.getElementById('device-hostname').value.trim();
+  if (!hostname) {
+    document.getElementById('error').textContent = 'Hostname is required.';
+    return;
+  }
+  document.getElementById('error').textContent = '';
   const body = {
+    hostname,
     vpn_mode: vpn ? vpn.value : 'bypass',
     use_pihole: pihole ? pihole.value === 'true' : false,
     notes: document.getElementById('notes').value,
   };
   await api('/devices/' + ip, { method:'PUT', body: JSON.stringify(body) });
+  showStatus(`Saved ${hostname} — registry and DHCP updated`);
   sessionStorage.setItem('highlightIp', ip);
   location.hash = 'devices';
 }
