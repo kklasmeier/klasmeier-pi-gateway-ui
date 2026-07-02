@@ -106,6 +106,8 @@
     .actions-cell button { margin-right:6px; margin-bottom:4px; }
     table.vpn-clients-table th.vpn-ip-col,
     table.vpn-clients-table td.vpn-ip-col { width:96px; font-size:12px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+    table.vpn-clients-table th.link-col,
+    table.vpn-clients-table td.link-cell { width:200px; max-width:200px; }
     table.vpn-clients-table th.vpn-actions-col,
     table.vpn-clients-table td.vpn-actions-col { width:196px; text-align:right; padding-left:8px; padding-right:10px; }
     table.vpn-clients-table .actions-cell button { font-size:11px; padding:4px 8px; margin-right:4px; margin-bottom:0; }
@@ -245,9 +247,24 @@ function esc(s) {
   return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
 }
 
+function apiErrorMessage(text, fallback) {
+  if (!text) return fallback;
+  try {
+    const j = JSON.parse(text);
+    if (typeof j.detail === 'string') return j.detail;
+    if (Array.isArray(j.detail)) {
+      return j.detail.map(d => (typeof d === 'string' ? d : d.msg || JSON.stringify(d))).join(', ');
+    }
+  } catch (_) { /* plain text */ }
+  return text;
+}
+
 async function api(path, opts={}) {
   const res = await fetch(API + path, { headers: {'Content-Type':'application/json'}, ...opts });
-  if (!res.ok) throw new Error(await res.text() || res.statusText);
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(apiErrorMessage(text, res.statusText));
+  }
   const ct = res.headers.get('content-type') || '';
   return ct.includes('json') ? res.json() : res.text();
 }
@@ -1130,10 +1147,62 @@ function copyVpnConfig() {
   showStatus('Config copied to clipboard');
 }
 
+function renderVpnClientRows(clients) {
+  if (!clients.length) {
+    return '<tr><td colspan="9" class="card-sub">No VPN clients yet.</td></tr>';
+  }
+  return clients.map(c => `<tr data-vpn-id="${esc(c.id)}">
+    <td>${esc(c.name)}</td>
+    <td class="vpn-ip-col">${esc(c.vpn_ip)}</td>
+    <td class="status-cell">${fmtVpnStatus(c)}</td>
+    <td class="date-cell">${fmtHandshake(c.last_handshake_seconds)}</td>
+    <td class="link-cell" title="${esc(c.endpoint || '')}">${esc(c.endpoint || '—')}</td>
+    <td class="rate-cell">${fmtBytes(c.rx_bytes)}</td>
+    <td class="rate-cell">${fmtBytes(c.tx_bytes)}</td>
+    <td class="notes-cell" title="${esc(c.notes||'')}">${esc(c.notes||'')}</td>
+    <td class="vpn-actions-col actions-cell">
+      <button type="button" class="btn-detail" onclick="showVpnClientConfig('${c.id}', event)">Config</button>
+      <button type="button" class="secondary" onclick="toggleVpnClient('${c.id}', ${!c.enabled}, event)">${c.enabled ? 'Disable' : 'Enable'}</button>
+      <button type="button" class="danger" onclick="deleteVpnClient('${c.id}', event)">Remove</button>
+    </td>
+  </tr>`).join('');
+}
+
+function renderVpnConfigUnavailablePanel(clientName) {
+  return `
+    <div class="card">
+      <h3>Config not available</h3>
+      <p class="card-sub"><strong>${esc(clientName)}</strong> was imported from the existing WireGuard setup. The gateway never stored its private key, so the client config cannot be shown again.</p>
+      <p class="card-sub">To get a new config and QR code: add a new client above, import it on the device, then disable or remove this entry.</p>
+    </div>`;
+}
+
 async function loadVpnClients() {
   const clients = await api('/vpn-clients');
-  const created = sessionStorage.getItem('vpnClientCreated');
+  const wrap = document.querySelector('.vpn-clients-table')?.closest('.devices-table-wrap');
+  const savedScroll = wrap ? wrap.scrollTop : 0;
+  const tbody = document.querySelector('.vpn-clients-table tbody');
+  const countEl = document.getElementById('vpn-clients-count');
+  const nameEl = document.getElementById('vpn-new-name');
+
+  if (tbody && nameEl) {
+    const savedName = nameEl.value;
+    const hadFocus = document.activeElement === nameEl;
+    const selStart = nameEl.selectionStart;
+    const selEnd = nameEl.selectionEnd;
+    tbody.innerHTML = renderVpnClientRows(clients);
+    if (countEl) countEl.textContent = `${clients.length} client${clients.length === 1 ? '' : 's'}`;
+    if (wrap) wrap.scrollTop = savedScroll;
+    nameEl.value = savedName;
+    if (hadFocus) {
+      nameEl.focus();
+      if (selStart != null && selEnd != null) nameEl.setSelectionRange(selStart, selEnd);
+    }
+    return;
+  }
+
   let createdPanel = '';
+  const created = sessionStorage.getItem('vpnClientCreated');
   if (created) {
     sessionStorage.removeItem('vpnClientCreated');
     try {
@@ -1141,15 +1210,16 @@ async function loadVpnClients() {
       if (c.config) createdPanel = renderVpnConfigPanel(`New client: ${c.name}`, c.config, c.qr_ascii);
     } catch (_) {}
   }
+
   document.getElementById('content').innerHTML = `
     <h1>Home Access VPN</h1>
     <p class="card-sub" style="margin-top:-8px;margin-bottom:16px">Remote phone / laptop access via WireGuard (wg1). Clients use Pi-hole DNS and exit via Obscura when connected.</p>
     <div class="page-toolbar">
       <input id="vpn-new-name" type="text" placeholder="New client name (e.g. Kevin phone)" style="min-width:220px">
       <button type="button" id="vpn-create-btn" onclick="createVpnClient(event)">Add client</button>
-      <span class="count">${clients.length} client${clients.length === 1 ? '' : 's'}</span>
+      <span id="vpn-clients-count" class="count">${clients.length} client${clients.length === 1 ? '' : 's'}</span>
     </div>
-    ${createdPanel}
+    <div id="vpn-created-panel">${createdPanel}</div>
     <div class="devices-table-wrap"><table class="vpn-clients-table">
       <thead><tr>
         <th>Name</th>
@@ -1162,21 +1232,7 @@ async function loadVpnClients() {
         <th class="notes-col">Notes</th>
         <th class="vpn-actions-col">Actions</th>
       </tr></thead>
-      <tbody>${clients.length ? clients.map(c => `<tr data-vpn-id="${esc(c.id)}">
-        <td>${esc(c.name)}</td>
-        <td class="vpn-ip-col">${esc(c.vpn_ip)}</td>
-        <td class="status-cell">${fmtVpnStatus(c)}</td>
-        <td class="date-cell">${fmtHandshake(c.last_handshake_seconds)}</td>
-        <td class="link-cell" title="${esc(c.endpoint || '')}">${esc(c.endpoint || '—')}</td>
-        <td class="rate-cell">${fmtBytes(c.rx_bytes)}</td>
-        <td class="rate-cell">${fmtBytes(c.tx_bytes)}</td>
-        <td class="notes-cell" title="${esc(c.notes||'')}">${esc(c.notes||'')}</td>
-        <td class="vpn-actions-col actions-cell">
-          <button type="button" class="btn-detail" onclick="showVpnClientConfig('${c.id}', event)">Config</button>
-          <button type="button" class="secondary" onclick="toggleVpnClient('${c.id}', ${!c.enabled}, event)">${c.enabled ? 'Disable' : 'Enable'}</button>
-          <button type="button" class="danger" onclick="deleteVpnClient('${c.id}', event)">Remove</button>
-        </td>
-      </tr>`).join('') : '<tr><td colspan="9" class="card-sub">No VPN clients yet.</td></tr>'}</tbody>
+      <tbody>${renderVpnClientRows(clients)}</tbody>
     </table></div>
     <div id="vpn-config-panel"></div>`;
 }
@@ -1193,7 +1249,12 @@ async function createVpnClient(event) {
   document.getElementById('error').textContent = '';
   try {
     const created = await api('/vpn-clients', { method:'POST', body: JSON.stringify({ name }) });
-    sessionStorage.setItem('vpnClientCreated', JSON.stringify(created));
+    const createdPanel = document.getElementById('vpn-created-panel');
+    if (createdPanel && created.config) {
+      createdPanel.innerHTML = renderVpnConfigPanel(`New client: ${created.name}`, created.config, created.qr_ascii);
+    } else {
+      sessionStorage.setItem('vpnClientCreated', JSON.stringify(created));
+    }
     showStatus(`Created VPN client ${created.name}`);
     await loadVpnClients();
     if (nameEl) nameEl.value = '';
@@ -1206,13 +1267,21 @@ async function createVpnClient(event) {
 async function showVpnClientConfig(id, event) {
   event?.stopPropagation();
   const panel = document.getElementById('vpn-config-panel');
+  const clientName = event?.target?.closest('tr')?.querySelector('td')?.textContent?.trim() || 'This client';
   if (panel) panel.innerHTML = '<p class="card-sub">Loading config…</p>';
   try {
     const resp = await api('/vpn-clients/' + id + '/config');
     if (panel) panel.innerHTML = renderVpnConfigPanel('Client config', resp.config, resp.qr_ascii);
     panel?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   } catch (e) {
-    if (panel) panel.innerHTML = `<div class="card"><p class="bad">${esc(e.message)}</p></div>`;
+    if (panel) {
+      const msg = e.message || '';
+      if (msg.includes('imported peer') || msg.includes('Private key not available')) {
+        panel.innerHTML = renderVpnConfigUnavailablePanel(clientName);
+      } else {
+        panel.innerHTML = `<div class="card"><p class="bad">${esc(msg)}</p></div>`;
+      }
+    }
   }
 }
 
