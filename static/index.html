@@ -43,15 +43,15 @@
     tr:hover { background:#22272e; }
     tr.row-highlight { background:#2d4a22 !important; outline:1px solid var(--green); }
     td.notes-cell { color:var(--muted); font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:0; }
-    td.date-cell { color:var(--muted); font-size:12px; white-space:nowrap; padding-left:16px; padding-right:16px; }
-    th.date-col { padding-left:16px; padding-right:16px; }
-    td.rate-cell { font-size:12px; white-space:nowrap; font-variant-numeric:tabular-nums; text-align:right; padding-left:6px; padding-right:6px; }
-    th.rate-col { white-space:nowrap; padding-left:6px; padding-right:6px; width:72px; }
+    td.date-cell { color:var(--muted); font-size:12px; white-space:nowrap; padding-left:8px; padding-right:8px; }
+    th.date-col { padding-left:8px; padding-right:8px; width:72px; white-space:nowrap; }
+    td.rate-cell { font-size:12px; white-space:nowrap; font-variant-numeric:tabular-nums; text-align:right; padding-left:6px; padding-right:8px; }
+    th.rate-col { white-space:nowrap; padding-left:6px; padding-right:6px; width:58px; text-align:right; }
     td.rate-cell .cell-empty { display:block; text-align:center; color:var(--muted); }
-    td.link-cell { font-size:12px; white-space:nowrap; color:var(--muted); padding-left:8px; padding-right:8px; }
-    th.link-col { white-space:nowrap; padding-left:8px; padding-right:8px; width:72px; }
-    td.status-cell { width:64px; text-align:center; font-size:12px; white-space:nowrap; padding-left:12px; padding-right:10px; }
-    th.status-col { width:64px; text-align:center; padding-left:12px; padding-right:10px; }
+    td.link-cell { font-size:12px; white-space:nowrap; color:var(--muted); padding-left:8px; padding-right:8px; overflow:hidden; text-overflow:ellipsis; }
+    th.link-col { white-space:nowrap; padding-left:8px; padding-right:8px; width:128px; }
+    td.status-cell { text-align:center; font-size:12px; white-space:nowrap; padding-left:8px; padding-right:8px; }
+    th.status-col { width:76px; text-align:center; padding-left:8px; padding-right:8px; }
     .status-on { color:var(--green); }
     .status-off { color:var(--muted); }
     td.date-cell .cell-empty { display:block; text-align:center; }
@@ -104,6 +104,11 @@
     .qr-box { font-family: ui-monospace, monospace; font-size:11px; line-height:1.1; white-space: pre; background:#0d1117; border:1px solid #30363d; border-radius:6px; padding:8px; overflow:auto; max-width:360px; }
     .actions-cell { white-space:nowrap; }
     .actions-cell button { margin-right:6px; margin-bottom:4px; }
+    table.vpn-clients-table th.vpn-ip-col,
+    table.vpn-clients-table td.vpn-ip-col { width:96px; font-size:12px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+    table.vpn-clients-table th.vpn-actions-col,
+    table.vpn-clients-table td.vpn-actions-col { width:196px; text-align:right; padding-left:8px; padding-right:10px; }
+    table.vpn-clients-table .actions-cell button { font-size:11px; padding:4px 8px; margin-right:4px; margin-bottom:0; }
     .section-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap; margin-bottom:8px; }
     .section-head > :first-child { flex:1 1 auto; min-width:0; margin:0; }
     .section-head a { flex:0 0 auto; margin-left:auto; font-size:13px; text-align:right; white-space:nowrap; }
@@ -1145,28 +1150,28 @@ async function loadVpnClients() {
       <span class="count">${clients.length} client${clients.length === 1 ? '' : 's'}</span>
     </div>
     ${createdPanel}
-    <div class="devices-table-wrap"><table>
+    <div class="devices-table-wrap"><table class="vpn-clients-table">
       <thead><tr>
         <th>Name</th>
-        <th>VPN IP</th>
-        <th>Status</th>
-        <th>Last seen</th>
-        <th>Endpoint</th>
+        <th class="vpn-ip-col">VPN IP</th>
+        <th class="status-col">Status</th>
+        <th class="date-col">Last seen</th>
+        <th class="link-col">Endpoint</th>
         <th class="rate-col">↓</th>
         <th class="rate-col">↑</th>
-        <th>Notes</th>
-        <th class="detail-col">Actions</th>
+        <th class="notes-col">Notes</th>
+        <th class="vpn-actions-col">Actions</th>
       </tr></thead>
       <tbody>${clients.length ? clients.map(c => `<tr data-vpn-id="${esc(c.id)}">
         <td>${esc(c.name)}</td>
-        <td>${esc(c.vpn_ip)}</td>
+        <td class="vpn-ip-col">${esc(c.vpn_ip)}</td>
         <td class="status-cell">${fmtVpnStatus(c)}</td>
         <td class="date-cell">${fmtHandshake(c.last_handshake_seconds)}</td>
-        <td class="link-cell">${esc(c.endpoint || '—')}</td>
+        <td class="link-cell" title="${esc(c.endpoint || '')}">${esc(c.endpoint || '—')}</td>
         <td class="rate-cell">${fmtBytes(c.rx_bytes)}</td>
         <td class="rate-cell">${fmtBytes(c.tx_bytes)}</td>
         <td class="notes-cell" title="${esc(c.notes||'')}">${esc(c.notes||'')}</td>
-        <td class="detail-cell actions-cell">
+        <td class="vpn-actions-col actions-cell">
           <button type="button" class="btn-detail" onclick="showVpnClientConfig('${c.id}', event)">Config</button>
           <button type="button" class="secondary" onclick="toggleVpnClient('${c.id}', ${!c.enabled}, event)">${c.enabled ? 'Disable' : 'Enable'}</button>
           <button type="button" class="danger" onclick="deleteVpnClient('${c.id}', event)">Remove</button>
