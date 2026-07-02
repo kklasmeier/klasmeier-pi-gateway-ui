@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Home Access VPN — Klasmeier</title>
+  <style>
+    :root { color-scheme: dark; --bg:#121417; --panel:#1c2128; --text:#e6edf3; --muted:#8b949e; --green:#3fb950; --amber:#d29922; --red:#f85149; --accent:#58a6ff; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: system-ui, sans-serif; background:var(--bg); color:var(--text); }
+    header { display:flex; justify-content:space-between; align-items:center; padding:12px 20px; background:var(--panel); border-bottom:1px solid #30363d; }
+    nav { width:220px; background:var(--panel); min-height:calc(100vh - 56px); padding:16px; border-right:1px solid #30363d; }
+    nav a { display:block; color:var(--text); text-decoration:none; padding:8px 10px; border-radius:6px; margin-bottom:4px; }
+    nav a.active, nav a:hover { background:#262c36; color:var(--accent); }
+    .nav-section-label { color:var(--muted); font-size:11px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; padding:8px 10px 4px; margin-top:4px; }
+    main { flex:1; padding:20px; min-width:0; }
+    .layout { display:flex; }
+    .card { background:var(--panel); border:1px solid #30363d; border-radius:8px; padding:16px; }
+    .card-sub { color:var(--muted); font-size:13px; margin:4px 0 0; }
+    .page-toolbar { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:14px; }
+    .page-toolbar input { max-width:none; width:auto; min-width:220px; font-size:14px; background:#0d1117; color:var(--text); border:1px solid #30363d; padding:8px; border-radius:6px; }
+    .page-toolbar .count { color:var(--muted); font-size:13px; margin-left:auto; }
+    .devices-table-wrap { max-height:calc(100vh - 200px); overflow:auto; border:1px solid #30363d; border-radius:8px; background:var(--panel); }
+    table { width:100%; border-collapse:collapse; table-layout:fixed; }
+    th, td { text-align:left; padding:10px 12px; border-bottom:1px solid #30363d; font-size:14px; vertical-align:middle; }
+    th { color:var(--muted); font-weight:600; position:sticky; top:0; z-index:2; background:var(--panel); box-shadow:0 1px 0 #30363d; }
+    tr:hover { background:#22272e; }
+    td.notes-cell { color:var(--muted); font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:0; }
+    td.date-cell { color:var(--muted); font-size:12px; white-space:nowrap; padding-left:8px; padding-right:8px; }
+    th.date-col { padding-left:8px; padding-right:8px; width:72px; white-space:nowrap; }
+    td.rate-cell { font-size:12px; white-space:nowrap; font-variant-numeric:tabular-nums; text-align:right; padding-left:6px; padding-right:8px; }
+    th.rate-col { white-space:nowrap; padding-left:6px; padding-right:6px; width:58px; text-align:right; }
+    td.link-cell { font-size:12px; white-space:nowrap; color:var(--muted); padding-left:8px; padding-right:8px; overflow:hidden; text-overflow:ellipsis; }
+    th.link-col { white-space:nowrap; padding-left:8px; padding-right:8px; width:128px; }
+    td.status-cell { text-align:center; font-size:12px; white-space:nowrap; padding-left:8px; padding-right:8px; }
+    th.status-col { width:76px; text-align:center; padding-left:8px; padding-right:8px; }
+    .status-on { color:var(--green); }
+    .status-off { color:var(--muted); }
+    .warn { color:var(--amber); }
+    .bad { color:var(--red); }
+    .btn-detail { display:inline-block; padding:4px 10px; font-size:12px; border-radius:6px; border:1px solid #30363d; background:#21262d; color:var(--accent); cursor:pointer; }
+    button { background:#238636; color:white; border:none; padding:8px 12px; border-radius:6px; cursor:pointer; }
+    button.secondary { background:#30363d; }
+    button.danger { background:#8b2e2e; }
+    button:disabled, button.busy { opacity:0.65; cursor:wait; }
+    .config-box { font-family: ui-monospace, monospace; font-size:12px; white-space: pre-wrap; background:#0d1117; border:1px solid #30363d; border-radius:6px; padding:12px; max-width:100%; overflow:auto; width:100%; }
+    .vpn-qr-wrap { margin-top:8px; }
+    .vpn-qr-img { display:block; max-width:280px; width:min(280px, 100%); height:auto; background:#fff; padding:12px; border-radius:8px; border:1px solid #30363d; }
+    .config-layout { display:flex; flex-wrap:wrap; gap:24px; align-items:flex-start; margin-top:12px; }
+    .config-layout .config-text { flex:1 1 320px; min-width:0; }
+    .config-layout .config-qr { flex:0 0 auto; }
+    .actions-cell { white-space:nowrap; }
+    .actions-cell button { margin-right:4px; margin-bottom:0; font-size:11px; padding:4px 8px; }
+    table.vpn-clients-table th.vpn-ip-col,
+    table.vpn-clients-table td.vpn-ip-col { width:96px; font-size:12px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+    table.vpn-clients-table th.link-col,
+    table.vpn-clients-table td.link-cell { width:200px; max-width:200px; }
+    table.vpn-clients-table th.vpn-actions-col,
+    table.vpn-clients-table td.vpn-actions-col { width:196px; text-align:right; padding-left:8px; padding-right:10px; }
+    .row { margin-bottom:12px; }
+    label { display:block; color:var(--muted); font-size:12px; margin-bottom:4px; }
+    #status { color:var(--green); margin:12px 0; min-height:1.2em; font-size:14px; }
+    #error { color:var(--red); margin:12px 0; }
+    @media (max-width:800px) {
+      .layout { flex-direction:column; }
+      nav { width:auto; min-height:auto; }
+      th.notes-col, td.notes-cell { display:none; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>◉ Home Access VPN</strong>
+    <span class="card-sub">WireGuard remote access (wg1)</span>
+  </header>
+  <div class="layout">
+    <nav>
+      <div class="nav-section-label">Network Gateway</div>
+      <a href="/gateway/#dashboard">Dashboard</a>
+      <a href="/gateway/#settings">Settings</a>
+      <a href="/gateway/#devices">Devices</a>
+      <a href="/gateway/#throughput">Throughput</a>
+      <hr style="border-color:#30363d;margin:16px 0 8px">
+      <div class="nav-section-label">Home Access</div>
+      <a href="/home-vpn/" class="active">VPN clients</a>
+      <hr style="border-color:#30363d;margin:8px 0">
+      <a href="http://192.168.1.11/admin" target="_blank">Pi-hole .11 ↗</a>
+      <a href="http://192.168.1.4/admin" target="_blank">Pi-hole .4 ↗</a>
+    </nav>
+    <main>
+      <div id="status"></div>
+      <div id="error"></div>
+      <div id="content"></div>
+    </main>
+  </div>
+<script>
+const API = '/home-vpn/api';
+const POLL_MS = 5000;
+let pollTimer;
+
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+}
+
+function apiErrorMessage(text, fallback) {
+  if (!text) return fallback;
+  try {
+    const j = JSON.parse(text);
+    if (typeof j.detail === 'string') return j.detail;
+    if (Array.isArray(j.detail)) {
+      return j.detail.map(d => (typeof d === 'string' ? d : d.msg || JSON.stringify(d))).join(', ');
+    }
+  } catch (_) {}
+  return text;
+}
+
+async function api(path, opts={}) {
+  const res = await fetch(API + path, { headers: {'Content-Type':'application/json'}, ...opts });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(apiErrorMessage(text, res.statusText));
+  }
+  const ct = res.headers.get('content-type') || '';
+  return ct.includes('json') ? res.json() : res.text();
+}
+
+function showStatus(msg) {
+  const el = document.getElementById('status');
+  if (!el) return;
+  el.textContent = msg;
+  if (msg) setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 4000);
+}
+
+function setBtnBusy(btn, busy, busyLabel) {
+  if (!btn) return;
+  if (busy) {
+    btn.dataset.prevLabel = btn.textContent;
+    btn.textContent = busyLabel || 'Working…';
+    btn.disabled = true;
+    btn.classList.add('busy');
+  } else {
+    btn.textContent = btn.dataset.prevLabel || btn.textContent;
+    btn.disabled = false;
+    btn.classList.remove('busy');
+  }
+}
+
+function fmtVpnStatus(c) {
+  if (!c.enabled) return '<span class="status-off">Disabled</span>';
+  if (c.connected) return '<span class="status-on">Connected</span>';
+  if (c.status === 'idle') return '<span class="warn">Idle</span>';
+  return '<span class="status-off">Never</span>';
+}
+
+function fmtHandshake(sec) {
+  if (sec == null) return '—';
+  if (sec < 120) return `${Math.round(sec)}s ago`;
+  if (sec < 7200) return `${Math.round(sec / 60)}m ago`;
+  return `${Math.round(sec / 3600)}h ago`;
+}
+
+function fmtBytes(n) {
+  if (!n) return '0 B';
+  const u = ['B', 'KB', 'MB', 'GB'];
+  let v = n, i = 0;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return `${v.toFixed(i ? 1 : 0)} ${u[i]}`;
+}
+
+function renderVpnQrBlock(qrPng) {
+  if (!qrPng) return '';
+  return `<div class="config-qr">
+    <label>Scan with WireGuard</label>
+    <div class="vpn-qr-wrap">
+      <img class="vpn-qr-img" src="data:image/png;base64,${qrPng}" alt="WireGuard QR code">
+    </div>
+    <p class="card-sub" style="margin-top:8px">Open WireGuard → Add tunnel → Create from QR code, or photograph this screen.</p>
+  </div>`;
+}
+
+function renderVpnConfigPanel(title, config, qrPng) {
+  return `
+    <div class="card" style="margin-top:16px">
+      <h3>${esc(title)}</h3>
+      <p class="card-sub">Private key is shown once — copy the config or scan the QR code now.</p>
+      <div class="config-layout">
+        <div class="config-text">
+          <div class="row"><label>Config file</label>
+            <textarea id="vpn-config-text" class="config-box" readonly rows="12">${esc(config)}</textarea>
+          </div>
+          <button type="button" onclick="copyVpnConfig()">Copy config</button>
+        </div>
+        ${renderVpnQrBlock(qrPng)}
+      </div>
+    </div>`;
+}
+
+function copyVpnConfig() {
+  const el = document.getElementById('vpn-config-text');
+  if (!el) return;
+  el.select();
+  document.execCommand('copy');
+  showStatus('Config copied to clipboard');
+}
+
+function renderVpnClientRows(clients) {
+  if (!clients.length) {
+    return '<tr><td colspan="9" class="card-sub">No VPN clients yet.</td></tr>';
+  }
+  return clients.map(c => `<tr data-vpn-id="${esc(c.id)}">
+    <td>${esc(c.name)}</td>
+    <td class="vpn-ip-col">${esc(c.vpn_ip)}</td>
+    <td class="status-cell">${fmtVpnStatus(c)}</td>
+    <td class="date-cell">${fmtHandshake(c.last_handshake_seconds)}</td>
+    <td class="link-cell" title="${esc(c.endpoint || '')}">${esc(c.endpoint || '—')}</td>
+    <td class="rate-cell">${fmtBytes(c.rx_bytes)}</td>
+    <td class="rate-cell">${fmtBytes(c.tx_bytes)}</td>
+    <td class="notes-cell" title="${esc(c.notes||'')}">${esc(c.notes||'')}</td>
+    <td class="vpn-actions-col actions-cell">
+      <button type="button" class="btn-detail" onclick="showVpnClientConfig('${c.id}', event)">Config</button>
+      <button type="button" class="secondary" onclick="toggleVpnClient('${c.id}', ${!c.enabled}, event)">${c.enabled ? 'Disable' : 'Enable'}</button>
+      <button type="button" class="danger" onclick="deleteVpnClient('${c.id}', event)">Remove</button>
+    </td>
+  </tr>`).join('');
+}
+
+function renderVpnConfigUnavailablePanel(clientName) {
+  return `
+    <div class="card">
+      <h3>Config not available</h3>
+      <p class="card-sub"><strong>${esc(clientName)}</strong> was imported from the existing WireGuard setup. The gateway never stored its private key, so the client config cannot be shown again.</p>
+      <p class="card-sub">Add a new client above, import it on the device, then disable or remove this entry.</p>
+    </div>`;
+}
+
+async function loadVpnClients() {
+  const clients = await api('/vpn-clients');
+  const wrap = document.querySelector('.vpn-clients-table')?.closest('.devices-table-wrap');
+  const savedScroll = wrap ? wrap.scrollTop : 0;
+  const tbody = document.querySelector('.vpn-clients-table tbody');
+  const countEl = document.getElementById('vpn-clients-count');
+  const nameEl = document.getElementById('vpn-new-name');
+
+  if (tbody && nameEl) {
+    const savedName = nameEl.value;
+    const hadFocus = document.activeElement === nameEl;
+    const selStart = nameEl.selectionStart;
+    const selEnd = nameEl.selectionEnd;
+    tbody.innerHTML = renderVpnClientRows(clients);
+    if (countEl) countEl.textContent = `${clients.length} client${clients.length === 1 ? '' : 's'}`;
+    if (wrap) wrap.scrollTop = savedScroll;
+    nameEl.value = savedName;
+    if (hadFocus) {
+      nameEl.focus();
+      if (selStart != null && selEnd != null) nameEl.setSelectionRange(selStart, selEnd);
+    }
+    return;
+  }
+
+  let createdPanel = '';
+  const created = sessionStorage.getItem('vpnClientCreated');
+  if (created) {
+    sessionStorage.removeItem('vpnClientCreated');
+    try {
+      const c = JSON.parse(created);
+      if (c.config) createdPanel = renderVpnConfigPanel(`New client: ${c.name}`, c.config, c.qr_png_base64);
+    } catch (_) {}
+  }
+
+  document.getElementById('content').innerHTML = `
+    <h1>VPN clients</h1>
+    <p class="card-sub" style="margin-top:-8px;margin-bottom:16px">Remote phone and laptop access. Clients use Pi-hole DNS and exit via Obscura when connected.</p>
+    <div class="page-toolbar">
+      <input id="vpn-new-name" type="text" placeholder="New client name (e.g. Kevin phone)">
+      <button type="button" id="vpn-create-btn" onclick="createVpnClient(event)">Add client</button>
+      <span id="vpn-clients-count" class="count">${clients.length} client${clients.length === 1 ? '' : 's'}</span>
+    </div>
+    <div id="vpn-created-panel">${createdPanel}</div>
+    <div class="devices-table-wrap"><table class="vpn-clients-table">
+      <thead><tr>
+        <th>Name</th>
+        <th class="vpn-ip-col">VPN IP</th>
+        <th class="status-col">Status</th>
+        <th class="date-col">Last seen</th>
+        <th class="link-col">Endpoint</th>
+        <th class="rate-col">↓</th>
+        <th class="rate-col">↑</th>
+        <th class="notes-col">Notes</th>
+        <th class="vpn-actions-col">Actions</th>
+      </tr></thead>
+      <tbody>${renderVpnClientRows(clients)}</tbody>
+    </table></div>
+    <div id="vpn-config-panel"></div>`;
+}
+
+async function createVpnClient(event) {
+  const btn = event?.target;
+  const nameEl = document.getElementById('vpn-new-name');
+  const name = nameEl?.value?.trim();
+  if (!name) {
+    document.getElementById('error').textContent = 'Enter a name for the new client.';
+    return;
+  }
+  setBtnBusy(btn, true, 'Creating…');
+  document.getElementById('error').textContent = '';
+  try {
+    const created = await api('/vpn-clients', { method:'POST', body: JSON.stringify({ name }) });
+    const createdPanel = document.getElementById('vpn-created-panel');
+    if (createdPanel && created.config) {
+      createdPanel.innerHTML = renderVpnConfigPanel(`New client: ${created.name}`, created.config, created.qr_png_base64);
+      createdPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    } else {
+      sessionStorage.setItem('vpnClientCreated', JSON.stringify(created));
+    }
+    showStatus(`Created VPN client ${created.name}`);
+    await loadVpnClients();
+    if (nameEl) nameEl.value = '';
+  } catch (e) {
+    setBtnBusy(btn, false);
+    document.getElementById('error').textContent = e.message;
+  }
+}
+
+async function showVpnClientConfig(id, event) {
+  event?.stopPropagation();
+  const panel = document.getElementById('vpn-config-panel');
+  const clientName = event?.target?.closest('tr')?.querySelector('td')?.textContent?.trim() || 'This client';
+  if (panel) panel.innerHTML = '<p class="card-sub">Loading config…</p>';
+  try {
+    const resp = await api('/vpn-clients/' + id + '/config');
+    if (panel) panel.innerHTML = renderVpnConfigPanel('Client config', resp.config, resp.qr_png_base64);
+    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  } catch (e) {
+    if (panel) {
+      const msg = e.message || '';
+      if (msg.includes('imported peer') || msg.includes('Private key not available')) {
+        panel.innerHTML = renderVpnConfigUnavailablePanel(clientName);
+      } else {
+        panel.innerHTML = `<div class="card"><p class="bad">${esc(msg)}</p></div>`;
+      }
+    }
+  }
+}
+
+async function toggleVpnClient(id, enabled, event) {
+  const btn = event?.target;
+  setBtnBusy(btn, true, enabled ? 'Enabling…' : 'Disabling…');
+  document.getElementById('error').textContent = '';
+  try {
+    await api('/vpn-clients/' + id, { method:'PUT', body: JSON.stringify({ enabled }) });
+    showStatus(enabled ? 'VPN client enabled' : 'VPN client disabled');
+    await loadVpnClients();
+  } catch (e) {
+    setBtnBusy(btn, false);
+    document.getElementById('error').textContent = e.message;
+  }
+}
+
+async function deleteVpnClient(id, event) {
+  const name = event?.target?.closest('tr')?.querySelector('td')?.textContent?.trim() || id;
+  if (!confirm(`Remove VPN client "${name}"? They will lose access immediately.`)) return;
+  const btn = event?.target;
+  setBtnBusy(btn, true, 'Removing…');
+  document.getElementById('error').textContent = '';
+  try {
+    await api('/vpn-clients/' + id, { method:'DELETE' });
+    showStatus(`Removed ${name}`);
+    await loadVpnClients();
+  } catch (e) {
+    setBtnBusy(btn, false);
+    document.getElementById('error').textContent = e.message;
+  }
+}
+
+async function init() {
+  document.getElementById('error').textContent = '';
+  try {
+    await loadVpnClients();
+    clearInterval(pollTimer);
+    pollTimer = setInterval(loadVpnClients, POLL_MS);
+  } catch (e) {
+    document.getElementById('error').textContent = e.message;
+    document.getElementById('content').innerHTML = '<div class="card"><h3>Gateway unreachable</h3><p class="card-sub">Could not load VPN clients.</p></div>';
+  }
+}
+
+init();
+</script>
+</body>
+</html>

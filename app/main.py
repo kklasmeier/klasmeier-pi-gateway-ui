@@ -57,16 +57,31 @@ async def _proxy(method: str, path: str, request: Request) -> Response:
     )
 
 
+def _read_static(name: str) -> HTMLResponse:
+    path = os.path.join(STATIC_DIR, name)
+    with open(path) as f:
+        return HTMLResponse(f.read())
+
+
 @app.get("/", response_class=HTMLResponse)
 @app.get("", response_class=HTMLResponse)
 def gateway_ui(_: str = Depends(verify_ui_user)):
-    index = os.path.join(STATIC_DIR, "index.html")
-    with open(index) as f:
-        return HTMLResponse(f.read())
+    return _read_static("index.html")
+
+
+@app.get("/home-vpn/", response_class=HTMLResponse)
+@app.get("/home-vpn", response_class=HTMLResponse)
+def home_vpn_ui(_: str = Depends(verify_ui_user)):
+    return _read_static("vpn.html")
 
 
 @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
 async def gateway_api_proxy(path: str, request: Request, _: str = Depends(verify_ui_user)):
+    return await _proxy(request.method, f"/api/{path}", request)
+
+
+@app.api_route("/home-vpn/api/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+async def home_vpn_api_proxy(path: str, request: Request, _: str = Depends(verify_ui_user)):
     return await _proxy(request.method, f"/api/{path}", request)
 
 
