@@ -1011,6 +1011,12 @@ function vpnSplitHtml(devices) {
     <p class="card-sub">${routed.length} VPN Internet · ${bypass.length} Local Internet devices</p>`;
 }
 
+function syncTpRangeButtons() {
+  document.querySelectorAll('.range-btns .range-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.range === tpRange);
+  });
+}
+
 function renderThroughputShell() {
   document.getElementById('content').innerHTML = `
     <div class="section-head">
@@ -1019,9 +1025,9 @@ function renderThroughputShell() {
     </div>
     <div class="page-toolbar">
       <div class="range-btns">
-        <button type="button" class="range-btn ${tpRange==='5m'?'active':''}" onclick="setTpRange('5m')">5m</button>
-        <button type="button" class="range-btn ${tpRange==='15m'?'active':''}" onclick="setTpRange('15m')">15m</button>
-        <button type="button" class="range-btn ${tpRange==='1h'?'active':''}" onclick="setTpRange('1h')">1h</button>
+        <button type="button" class="range-btn ${tpRange==='5m'?'active':''}" data-range="5m" onclick="setTpRange('5m')">5m</button>
+        <button type="button" class="range-btn ${tpRange==='15m'?'active':''}" data-range="15m" onclick="setTpRange('15m')">15m</button>
+        <button type="button" class="range-btn ${tpRange==='1h'?'active':''}" data-range="1h" onclick="setTpRange('1h')">1h</button>
       </div>
       <span class="count" id="tp-refresh-note">Auto-refresh: 5s</span>
     </div>
@@ -1055,6 +1061,7 @@ function renderThroughputShell() {
 function setTpRange(r) {
   tpRange = r;
   tpNeedsBackfill = true;
+  syncTpRangeButtons();
   loadThroughput();
 }
 
@@ -1073,6 +1080,7 @@ function refreshThroughputView(tp, devices) {
     ? top.map((d, i) => `<li><span>${i+1}. ${esc(deviceDisplayName(d))} <span class="card-sub">${esc(d.ip)}</span></span><span class="rate">${fmtMbps(d.total)} Mbps</span></li>`).join('')
     : '<li class="card-sub">No traffic</li>';
   document.getElementById('tp-vpn-split').innerHTML = vpnSplitHtml(devices);
+  syncTpRangeButtons();
   return true;
 }
 
