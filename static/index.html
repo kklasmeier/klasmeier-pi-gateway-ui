@@ -82,6 +82,10 @@
     @keyframes spin { to { transform:rotate(360deg); } }
     button:disabled, button.busy { opacity:0.65; cursor:wait; }
     tr.row-busy { opacity:0.7; }
+    .page-loading-inline { display:inline-flex; align-items:center; gap:8px; color:var(--muted); font-size:16px; font-weight:normal; }
+    .devices-loading { text-align:center; padding:28px 16px; color:var(--muted); }
+    .devices-loading .spinner { margin-right:8px; }
+    .detail-loading .card-sub { color:var(--muted); }
     #status { color:var(--green); margin:12px 0; min-height:1.2em; font-size:14px; }
     .device-header { display:flex; justify-content:space-between; align-items:flex-start; gap:20px; margin-bottom:20px; flex-wrap:wrap; }
     .device-header h1 { margin:0; }
@@ -162,9 +166,11 @@ const PIFIREWALL_IP = '192.168.1.28';
 const GRAFANA_TRAFFIC = 'http://192.168.1.16:3000/d/f47ac10b-58cc-4372-a567-0e02b2c3d479/klasmeier-gateway-traffic?orgId=1&refresh=30s';
 const HISTORY_MAX_MS = 60 * 60 * 1000;
 const POLL_MS = 5000;
+const PRESENCE_POLL_MS = 30000;
 const LIVE_TAIL_MS = 10000;
 let pollTimer;
 let devicePollTimer;
+let presencePollTimer;
 let dashboardReady = false;
 let throughputReady = false;
 let dashboardNeedsBackfill = true;
@@ -175,6 +181,81 @@ let deviceSort = { col: 'ip', dir: 'asc' };
 let devicesPageReady = false;
 let pendingDeviceRefresh = null;
 let networkDefaults = null;
+let devicesCache = [];
+let presenceByIp = {};
+let devicesSessionId = 0;
+let devicesFetchInFlight = false;
+let deviceDetailSessionId = 0;
+let dashboardSessionId = 0;
+let throughputSessionId = 0;
+let dashboardFetchInFlight = false;
+let throughputFetchInFlight = false;
+let searchDebounceTimer = null;
+const SEARCH_DEBOUNCE_MS = 350;
+
+function routeHash() {
+  return location.hash.replace('#', '') || 'dashboard';
+}
+
+function isDevicesPage() {
+  return routeHash() === 'devices';
+}
+
+function isDashboardPage() {
+  return routeHash() === 'dashboard';
+}
+
+function isThroughputPage() {
+  return routeHash() === 'throughput';
+}
+
+function currentDeviceIp() {
+  const h = routeHash();
+  return h.startsWith('device-') ? h.slice('device-'.length) : null;
+}
+
+function invalidateDevicesSession() {
+  devicesSessionId++;
+}
+
+function applyPresenceRows(rows) {
+  for (const row of rows || []) {
+    presenceByIp[row.ip] = {
+      connected: row.connected,
+      link_type: row.link_type,
+    };
+  }
+}
+
+function mergeDevicePresence(devices) {
+  return (devices || []).map(d => {
+    const p = presenceByIp[d.ip];
+    if (!p) return d;
+    return {
+      ...d,
+      connected: p.connected ?? d.connected ?? null,
+      link_type: p.link_type ?? d.link_type ?? null,
+    };
+  });
+}
+
+function refreshDevicesCachePresence() {
+  devicesCache = mergeDevicePresence(devicesCache);
+}
+
+function invalidateDeviceDetailSession() {
+  deviceDetailSessionId++;
+}
+
+function invalidateDashboardSession() {
+  dashboardSessionId++;
+  dashboardReady = false;
+}
+
+function invalidateThroughputSession() {
+  throughputSessionId++;
+  throughputReady = false;
+}
 
 const sampleHistory = {
   samples: [],
@@ -404,17 +485,22 @@ function showStatus(msg) {
 }
 
 function setBtnBusy(btn, busy, busyLabel) {
-  if (!btn) return;
+  const target = (btn && btn.tagName) ? btn : document.getElementById('save-device-btn');
+  if (!target) return;
   if (busy) {
-    btn.dataset.prevLabel = btn.textContent;
-    btn.textContent = busyLabel || 'Working…';
-    btn.disabled = true;
-    btn.classList.add('busy');
+    target.dataset.prevLabel = target.textContent;
+    target.textContent = busyLabel || 'Working…';
+    target.disabled = true;
+    target.classList.add('busy');
   } else {
-    btn.textContent = btn.dataset.prevLabel || btn.textContent;
-    btn.disabled = false;
-    btn.classList.remove('busy');
+    target.textContent = target.dataset.prevLabel || target.textContent;
+    target.disabled = false;
+    target.classList.remove('busy');
   }
+}
+
+async function paintUi() {
+  await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
 }
 
 function setCellBusy(row, selector, busy) {
@@ -482,7 +568,7 @@ function renderDashboardShell() {
   dashboardReady = true;
 }
 
-function refreshDashboardView(status, tp, devices) {
+function refreshDashboardView(status, tp) {
   const obscuraEl = document.getElementById('dash-obscura-status');
   if (!obscuraEl) return false;
   obscuraEl.className = status.vpn_up ? 'ok' : 'bad';
@@ -496,10 +582,8 @@ function refreshDashboardView(status, tp, devices) {
   document.getElementById('dash-dhcp-counts').textContent = `${status.active_leases} active lease(s) · ${status.reserved_count} reserved`;
   document.getElementById('dash-uptime').textContent = `${(status.uptime_seconds/3600).toFixed(1)} hours`;
   document.getElementById('dash-tp-now').textContent = `↓ ${fmtMbps(tp.eth0_rx_bps)} Mbps in · ↑ ${fmtMbps(tp.eth0_tx_bps)} Mbps out`;
-  const routed = devices.filter(d => d.vpn_mode === 'routed').length;
-  const bypass = devices.filter(d => d.vpn_mode === 'bypass').length;
-  const pihole = devices.filter(d => d.use_pihole).length;
-  document.getElementById('dash-policy').textContent = `${routed} routed · ${bypass} bypass · ${pihole} Pi-hole`;
+  document.getElementById('dash-policy').textContent =
+    `${status.routed_count} routed · ${status.bypass_count} bypass · ${status.pihole_count} Pi-hole`;
   renderChart('dash-chart', [
     { field: 'eth0_rx', color: '#58a6ff' },
     { field: 'eth0_tx', color: '#3fb950' },
@@ -509,19 +593,35 @@ function refreshDashboardView(status, tp, devices) {
 }
 
 async function loadDashboard() {
-  if (dashboardNeedsBackfill) {
-    sampleHistory.clear();
-    await backfillHistory('5m');
-    dashboardNeedsBackfill = false;
-  }
-  const [status, tp, devices] = await Promise.all([
-    api('/status'), api('/throughput'), api('/devices')
-  ]);
-  pushHistory(tp, devices);
-  updateHeaderStatus(status);
-  if (!dashboardReady || !refreshDashboardView(status, tp, devices)) {
-    renderDashboardShell();
-    refreshDashboardView(status, tp, devices);
+  if (dashboardFetchInFlight) return;
+  const session = dashboardSessionId;
+  if (!dashboardReady) renderDashboardShell();
+
+  dashboardFetchInFlight = true;
+  try {
+    const needBackfill = dashboardNeedsBackfill;
+    const backfillP = needBackfill
+      ? backfillHistory('5m').then(() => {
+          if (session === dashboardSessionId) dashboardNeedsBackfill = false;
+        })
+      : Promise.resolve();
+
+    const [status, tp] = await Promise.all([api('/status'), api('/throughput')]);
+    if (!isDashboardPage() || session !== dashboardSessionId) return;
+
+    pushHistory(tp, null);
+    updateHeaderStatus(status);
+    refreshDashboardView(status, tp);
+
+    await backfillP;
+    if (!isDashboardPage() || session !== dashboardSessionId) return;
+    renderChart('dash-chart', [
+      { field: 'eth0_rx', color: '#58a6ff' },
+      { field: 'eth0_tx', color: '#3fb950' },
+      { field: 'wg0_rx', color: '#d29922' },
+    ], rangeMs('5m'));
+  } finally {
+    dashboardFetchInFlight = false;
   }
 }
 
@@ -581,6 +681,18 @@ function fmtLinkCell(v) {
   return esc(v);
 }
 
+function activityBadgesHtml(d) {
+  const badges = [];
+  if (d.recently_joined && d.network_joined_at) {
+    badges.push(`<span class="activity-badge activity-badge-joined" title="Joined network ${fmtDate(d.network_joined_at)} (within the last 60 minutes)">Joined</span>`);
+  }
+  if (d.recently_registered && d.registered_at) {
+    badges.push(`<span class="activity-badge activity-badge-new" title="Registered ${fmtDate(d.registered_at)} (within the last 60 minutes)">New</span>`);
+  }
+  if (!badges.length) return '';
+  return `<span class="device-badges">${badges.join('')}</span>`;
+}
+
 function fmtStatusCell(connected) {
   if (connected === true) return '<span class="status-on" title="Online">Online</span>';
   if (connected === false) return '<span class="status-off" title="Offline">Offline</span>';
@@ -595,19 +707,13 @@ function fmtStatusLabel(connected) {
 
 function fmtHostnameCell(d) {
   let html = esc(d.hostname);
-  const badges = [];
-  if (d.recently_joined && d.network_joined_at) {
-    badges.push(`<span class="activity-badge activity-badge-joined" title="Joined network ${fmtDate(d.network_joined_at)} (within the last 60 minutes)">Joined</span>`);
-  }
-  if (d.recently_registered && d.registered_at) {
-    badges.push(`<span class="activity-badge activity-badge-new" title="Registered ${fmtDate(d.registered_at)} (within the last 60 minutes)">New</span>`);
-  }
-  if (badges.length) html += `<span class="device-badges">${badges.join('')}</span>`;
+  const badges = activityBadgesHtml(d);
+  if (badges) html += badges;
   return html;
 }
 
 function activityLegendHtml() {
-  return `<p class="activity-legend">Badges:
+  return `<p class="activity-legend">Host badges:
     <span class="activity-badge activity-badge-joined" title="Known device that was offline and joined the network within the last 60 minutes">Joined</span>
     <span>returned to network</span>
     <span class="activity-badge activity-badge-new" title="MAC address registered in the gateway for the first time within the last 60 minutes">New</span>
@@ -663,7 +769,57 @@ function setDeviceSort(col, event) {
     deviceSort.dir = 'asc';
   }
   updateSortHeaders();
-  loadDevices({ force: true });
+  applyDevicesViewFromCache({ force: true });
+}
+
+function onDevicesSearchInput() {
+  const search = document.getElementById('dev-search');
+  if (search) deviceFilters.search = search.value;
+  clearTimeout(searchDebounceTimer);
+  searchDebounceTimer = setTimeout(() => {
+    if (!isDevicesPage()) return;
+    applyDevicesViewFromCache({ force: true });
+  }, SEARCH_DEBOUNCE_MS);
+}
+
+function onDevicesFilterChange() {
+  readDeviceFilters();
+  if (!isDevicesPage()) return;
+  applyDevicesViewFromCache({ force: true });
+}
+
+function setDevicesTableLoading(loading) {
+  const tbody = document.querySelector('.devices-table-wrap tbody');
+  if (!tbody) return;
+  if (loading && !tbody.querySelector('tr[data-ip]')) {
+    tbody.innerHTML = '<tr><td colspan="14" class="devices-loading"><span class="spinner"></span>Loading devices from gateway…</td></tr>';
+  }
+}
+
+function applyDevicesViewFromCache({ force = false } = {}) {
+  if (!isDevicesPage()) return;
+  const devices = devicesCache;
+  if (!devices.length && !devicesPageReady) return;
+
+  const filtered = sortDevices(filterDevices(devices));
+  const countEl = document.querySelector('.page-toolbar .count');
+
+  if (!force && devicesTableHasSelection()) {
+    pendingDeviceRefresh = filtered;
+    if (countEl) countEl.textContent = `${filtered.length} of ${devices.length} devices`;
+    return;
+  }
+
+  if (!devicesPageReady || !document.getElementById('dev-search')) {
+    renderDevicesShell(filtered.length, devices.length);
+    force = true;
+  } else if (countEl) {
+    countEl.textContent = `${filtered.length} of ${devices.length} devices`;
+  }
+
+  pendingDeviceRefresh = null;
+  refreshDeviceTableBody(filtered, { force: true });
+  applyHighlight();
 }
 
 function updateSortHeaders() {
@@ -694,6 +850,8 @@ function filterDevices(devices) {
     }
     if (deviceFilters.status === 'online' && d.connected !== true) return false;
     if (deviceFilters.status === 'offline' && d.connected !== false) return false;
+    if (deviceFilters.status === 'joined' && !d.recently_joined) return false;
+    if (deviceFilters.status === 'new' && !d.recently_registered) return false;
     return true;
   });
 }
@@ -786,6 +944,7 @@ function applyHighlight() {
 
 function openDeviceDetail(ip, event) {
   if (event) event.stopPropagation();
+  if (currentDeviceIp() === ip) return;
   location.hash = 'device-' + ip;
 }
 
@@ -902,7 +1061,7 @@ function updateDeviceRow(tr, d) {
 }
 
 function flushPendingDeviceRefresh() {
-  if (!pendingDeviceRefresh || devicesTableHasSelection()) return;
+  if (!pendingDeviceRefresh || devicesTableHasSelection() || !isDevicesPage()) return;
   refreshDeviceTableBody(pendingDeviceRefresh, { force: true });
   pendingDeviceRefresh = null;
 }
@@ -946,33 +1105,35 @@ function renderDevicesShell(filteredCount, totalCount) {
   document.getElementById('content').innerHTML = `
     <h1>Devices</h1>
     <div class="page-toolbar">
-      <input id="dev-search" type="search" placeholder="Search hostname, IP, MAC…" value="${esc(deviceFilters.search)}" oninput="loadDevices({force:true})">
-      <select id="dev-filter-vpn" onchange="loadDevices({force:true})">
+      <input id="dev-search" type="search" placeholder="Search hostname, IP, MAC…" value="${esc(deviceFilters.search)}" oninput="onDevicesSearchInput()">
+      <select id="dev-filter-vpn" onchange="onDevicesFilterChange()">
         <option value="all" ${deviceFilters.vpn==='all'?'selected':''}>VPN: All</option>
         <option value="routed" ${deviceFilters.vpn==='routed'?'selected':''}>VPN: Routed</option>
         <option value="bypass" ${deviceFilters.vpn==='bypass'?'selected':''}>VPN: Bypass</option>
       </select>
-      <select id="dev-filter-pihole" onchange="loadDevices({force:true})">
+      <select id="dev-filter-pihole" onchange="onDevicesFilterChange()">
         <option value="all" ${deviceFilters.pihole==='all'?'selected':''}>Pi-hole: All</option>
         <option value="on" ${deviceFilters.pihole==='on'?'selected':''}>Pi-hole: On</option>
         <option value="off" ${deviceFilters.pihole==='off'?'selected':''}>Pi-hole: Off</option>
       </select>
-      <select id="dev-filter-type" onchange="loadDevices({force:true})">
+      <select id="dev-filter-type" onchange="onDevicesFilterChange()">
         <option value="all" ${deviceFilters.type==='all'?'selected':''}>Type: All</option>
         <option value="reserved" ${deviceFilters.type==='reserved'?'selected':''}>Type: Reserved</option>
         <option value="dynamic" ${deviceFilters.type==='dynamic'?'selected':''}>Type: Dynamic</option>
       </select>
-      <select id="dev-filter-link" onchange="loadDevices({force:true})">
+      <select id="dev-filter-link" onchange="onDevicesFilterChange()">
         <option value="all" ${deviceFilters.link==='all'?'selected':''}>Link: All</option>
         <option value="wired" ${deviceFilters.link==='wired'?'selected':''}>Link: Wired</option>
         <option value="2.4" ${deviceFilters.link==='2.4'?'selected':''}>Link: 2.4 GHz</option>
         <option value="5" ${deviceFilters.link==='5'?'selected':''}>Link: 5 GHz</option>
         <option value="unknown" ${deviceFilters.link==='unknown'?'selected':''}>Link: Unknown</option>
       </select>
-      <select id="dev-filter-status" onchange="loadDevices({force:true})">
+      <select id="dev-filter-status" onchange="onDevicesFilterChange()">
         <option value="all" ${deviceFilters.status==='all'?'selected':''}>Status: All</option>
         <option value="online" ${deviceFilters.status==='online'?'selected':''}>Status: Online</option>
         <option value="offline" ${deviceFilters.status==='offline'?'selected':''}>Status: Offline</option>
+        <option value="joined" ${deviceFilters.status==='joined'?'selected':''}>Status: Joined</option>
+        <option value="new" ${deviceFilters.status==='new'?'selected':''}>Status: New</option>
       </select>
       <span class="count">${filteredCount} of ${totalCount} devices</span>
     </div>
@@ -999,39 +1160,61 @@ function renderDevicesShell(filteredCount, totalCount) {
   updateSortHeaders();
 }
 
+async function loadDevicesPresence() {
+  if (!isDevicesPage()) return;
+  const session = devicesSessionId;
+  try {
+    const rows = await api('/devices/presence');
+    if (!isDevicesPage() || session !== devicesSessionId) return;
+    applyPresenceRows(rows);
+    refreshDevicesCachePresence();
+    applyDevicesViewFromCache({ force: false });
+  } catch (_) { /* keep last-known status/link */ }
+}
+
 async function loadDevices({ force = false } = {}) {
+  if (!isDevicesPage()) return;
+  if (devicesFetchInFlight) return;
+
+  const session = devicesSessionId;
   readDeviceFilters();
   const wrapBefore = document.querySelector('.devices-table-wrap');
   const savedScroll = wrapBefore ? wrapBefore.scrollTop : 0;
   const scrollToHighlight = !!sessionStorage.getItem('highlightIp');
+  const firstPaint = !devicesPageReady || !document.getElementById('dev-search');
 
-  const devices = await api('/devices');
-  const tp = await api('/throughput');
-  pushHistory(tp, devices);
-  const filtered = sortDevices(filterDevices(devices));
-
-  const countEl = document.querySelector('.page-toolbar .count');
-  if (!force && devicesTableHasSelection()) {
-    pendingDeviceRefresh = filtered;
-    if (countEl) countEl.textContent = `${filtered.length} of ${devices.length} devices`;
-    return;
+  if (firstPaint) {
+    renderDevicesShell(0, 0);
+    setDevicesTableLoading(true);
   }
 
-  if (!devicesPageReady || !document.getElementById('dev-search')) {
-    renderDevicesShell(filtered.length, devices.length);
-    force = true;
-  } else if (countEl) {
-    countEl.textContent = `${filtered.length} of ${devices.length} devices`;
-  }
+  devicesFetchInFlight = true;
+  try {
+    const [devices, tp] = await Promise.all([
+      api('/devices?lite=1'),
+      api('/throughput'),
+    ]);
+    if (!isDevicesPage() || session !== devicesSessionId) return;
 
-  pendingDeviceRefresh = null;
-  refreshDeviceTableBody(filtered, { force: true });
+    pushHistory(tp, devices);
+    devicesCache = mergeDevicePresence(devices);
 
-  if (!scrollToHighlight) {
-    const wrap = document.querySelector('.devices-table-wrap');
-    if (wrap) wrap.scrollTop = savedScroll;
+    if (firstPaint || !document.getElementById('dev-search')) {
+      renderDevicesShell(
+        filterDevices(devices).length,
+        devices.length,
+      );
+    }
+
+    applyDevicesViewFromCache({ force: force || firstPaint });
+
+    if (!scrollToHighlight) {
+      const wrap = document.querySelector('.devices-table-wrap');
+      if (wrap) wrap.scrollTop = savedScroll;
+    }
+  } finally {
+    devicesFetchInFlight = false;
   }
-  applyHighlight();
 }
 
 function dnsLabel(d, settings) {
@@ -1045,18 +1228,45 @@ function dnsLabel(d, settings) {
   return `${n.default_public_dns_primary}${sec}`;
 }
 
-async function loadDevice(ip) {
+function renderDeviceDetailShell(ip) {
+  document.getElementById('content').innerHTML = `
+    <div class="device-header">
+      <h1><span class="page-loading-inline"><span class="spinner"></span> Loading device…</span> <small>${esc(ip)}</small></h1>
+    </div>
+    <div class="cards detail-loading">
+      <div class="card">
+        <h3>Live throughput (last 15 min)</h3>
+        <p class="card-sub">Fetching history and live rates…</p>
+      </div>
+      <div class="card">
+        <h3>Session</h3>
+        <p class="card-sub">Fetching DHCP and network status…</p>
+      </div>
+    </div>
+    <div class="card detail-loading">
+      <p class="card-sub">Loading device settings…</p>
+    </div>`;
+}
+
+function startDeviceDetailPoll(ip) {
   clearInterval(devicePollTimer);
-  dashboardReady = false;
-  throughputReady = false;
-  devicesPageReady = false;
-  sampleHistory.clear();
-  await backfillHistory('15m', ip);
-  const [d, tp, settings] = await Promise.all([
-    api('/devices/' + ip),
-    api('/throughput?ip=' + encodeURIComponent(ip)),
-    networkDefaults ? Promise.resolve({ network_defaults: networkDefaults }) : api('/settings'),
-  ]);
+  devicePollTimer = setInterval(async () => {
+    if (currentDeviceIp() !== ip) return;
+    try {
+      const live = await api('/throughput?ip=' + encodeURIComponent(ip));
+      if (currentDeviceIp() !== ip) return;
+      pushHistory(live, [{ ip, rx_bps: live.rx_bps, tx_bps: live.tx_bps }]);
+      const el = document.getElementById('device-tp');
+      if (el) el.textContent = `↓ ${fmtMbps(live.rx_bps||0)} Mbps · ↑ ${fmtMbps(live.tx_bps||0)} Mbps`;
+      renderChart('dev-chart-rx', [
+        { field: `dev:${ip}`, dir: 'rx', color: '#58a6ff' },
+        { field: `dev:${ip}`, dir: 'tx', color: '#3fb950' },
+      ], rangeMs('15m'));
+    } catch (_) {}
+  }, POLL_MS);
+}
+
+function renderDeviceDetailContent(d, tp, settings, ip) {
   networkDefaults = settings.network_defaults || settings;
   pushHistory(tp, [{ ip, rx_bps: tp.rx_bps, tx_bps: tp.tx_bps }]);
 
@@ -1151,22 +1361,46 @@ async function loadDevice(ip) {
     { field: `dev:${ip}`, dir: 'tx', color: '#3fb950' },
   ], rangeMs('15m'));
 
-  devicePollTimer = setInterval(async () => {
-    try {
-      const live = await api('/throughput?ip=' + encodeURIComponent(ip));
-      pushHistory(live, [{ ip, rx_bps: live.rx_bps, tx_bps: live.tx_bps }]);
-      const el = document.getElementById('device-tp');
-      if (el) el.textContent = `↓ ${fmtMbps(live.rx_bps||0)} Mbps · ↑ ${fmtMbps(live.tx_bps||0)} Mbps`;
-      renderChart('dev-chart-rx', [
-        { field: `dev:${ip}`, dir: 'rx', color: '#58a6ff' },
-        { field: `dev:${ip}`, dir: 'tx', color: '#3fb950' },
-      ], rangeMs('15m'));
-    } catch (_) {}
-  }, POLL_MS);
+  startDeviceDetailPoll(ip);
+}
+
+async function loadDevice(ip) {
+  const session = ++deviceDetailSessionId;
+  clearInterval(devicePollTimer);
+  dashboardReady = false;
+  throughputReady = false;
+  devicesPageReady = false;
+  renderDeviceDetailShell(ip);
+
+  const cached = devicesCache.find(d => d.ip === ip);
+  sampleHistory.clear();
+  try {
+    const backfillP = backfillHistory('15m', ip);
+    const liveP = Promise.all([
+      api('/throughput?ip=' + encodeURIComponent(ip)),
+      networkDefaults ? Promise.resolve({ network_defaults: networkDefaults }) : api('/settings'),
+    ]);
+    const deviceP = cached
+      ? Promise.resolve(cached)
+      : api('/devices/' + encodeURIComponent(ip) + '?snapshot=1');
+    const [, [tp, settings], d] = await Promise.all([backfillP, liveP, deviceP]);
+    if (session !== deviceDetailSessionId || currentDeviceIp() !== ip) return;
+    renderDeviceDetailContent(d, tp, settings, ip);
+  } catch (e) {
+    if (session !== deviceDetailSessionId || currentDeviceIp() !== ip) return;
+    document.getElementById('error').textContent = e.message;
+    document.getElementById('content').innerHTML = `
+      <div class="card">
+        <h3>Could not load device</h3>
+        <p>${esc(e.message)}</p>
+        <button class="secondary" onclick="location.hash='devices'">Back to devices</button>
+      </div>`;
+  }
 }
 
 async function saveDevice(ip, event) {
-  const btn = event?.target;
+  event?.preventDefault();
+  const btn = document.getElementById('save-device-btn');
   const vpn = document.querySelector('input[name="vpn"]:checked');
   const pihole = document.querySelector('input[name="pihole"]:checked');
   const hostname = document.getElementById('device-hostname').value.trim();
@@ -1176,6 +1410,7 @@ async function saveDevice(ip, event) {
   }
   setBtnBusy(btn, true, 'Saving…');
   document.getElementById('error').textContent = '';
+  await paintUi();
   const body = {
     hostname,
     vpn_mode: vpn ? vpn.value : 'bypass',
@@ -1194,9 +1429,10 @@ async function saveDevice(ip, event) {
 }
 
 async function reserveDevice(ip, event) {
-  const btn = event?.target;
+  const btn = document.getElementById('reserve-btn') || event?.currentTarget;
   setBtnBusy(btn, true, 'Reserving…');
   document.getElementById('error').textContent = '';
+  await paintUi();
   try {
     const d = await api('/devices/' + ip);
     await api('/devices', {
@@ -1320,11 +1556,12 @@ function renderThroughputShell() {
 function setTpRange(r) {
   tpRange = r;
   tpNeedsBackfill = true;
+  sampleHistory.clear();
   syncTpRangeButtons();
   loadThroughput();
 }
 
-function refreshThroughputView(tp, devices) {
+function refreshThroughputView(tp, clients) {
   if (!document.getElementById('tp-eth0')) return false;
   document.getElementById('tp-eth0').innerHTML = `↓ ${fmtMbps(tp.eth0_rx_bps)} Mbps<br>↑ ${fmtMbps(tp.eth0_tx_bps)} Mbps`;
   document.getElementById('tp-wg0').innerHTML = `↓ ${fmtMbps(tp.wg0_rx_bps)} Mbps<br>↑ ${fmtMbps(tp.wg0_tx_bps)} Mbps`;
@@ -1334,26 +1571,44 @@ function refreshThroughputView(tp, devices) {
     { field: 'eth0_tx', color: '#3fb950' },
     { field: 'wg0_rx', color: '#d29922' },
   ], rangeMs(tpRange));
-  const top = topDevices(devices);
+  const top = topDevices(clients);
   document.getElementById('tp-top-devices').innerHTML = top.length
     ? top.map((d, i) => `<li><span>${i+1}. ${esc(deviceDisplayName(d))} <span class="card-sub">${esc(d.ip)}</span></span><span class="rate">${fmtMbps(d.total)} Mbps</span></li>`).join('')
     : '<li class="card-sub">No traffic</li>';
-  document.getElementById('tp-vpn-split').innerHTML = vpnSplitHtml(devices);
+  document.getElementById('tp-vpn-split').innerHTML = vpnSplitHtml(clients);
   syncTpRangeButtons();
   return true;
 }
 
 async function loadThroughput() {
-  if (tpNeedsBackfill) {
-    sampleHistory.clear();
-    await backfillHistory(tpRange);
-    tpNeedsBackfill = false;
-  }
-  const [tp, devices] = await Promise.all([api('/throughput'), api('/devices')]);
-  pushHistory(tp, devices);
-  if (!throughputReady || !refreshThroughputView(tp, devices)) {
-    renderThroughputShell();
-    refreshThroughputView(tp, devices);
+  if (throughputFetchInFlight) return;
+  const session = throughputSessionId;
+  if (!throughputReady) renderThroughputShell();
+
+  throughputFetchInFlight = true;
+  try {
+    const needBackfill = tpNeedsBackfill;
+    const backfillP = needBackfill
+      ? backfillHistory(tpRange).then(() => {
+          if (session === throughputSessionId) tpNeedsBackfill = false;
+        })
+      : Promise.resolve();
+
+    const [tp, clients] = await Promise.all([api('/throughput'), api('/throughput/clients')]);
+    if (!isThroughputPage() || session !== throughputSessionId) return;
+
+    pushHistory(tp, clients);
+    refreshThroughputView(tp, clients);
+
+    await backfillP;
+    if (!isThroughputPage() || session !== throughputSessionId) return;
+    renderChart('tp-chart', [
+      { field: 'eth0_rx', color: '#58a6ff' },
+      { field: 'eth0_tx', color: '#3fb950' },
+      { field: 'wg0_rx', color: '#d29922' },
+    ], rangeMs(tpRange));
+  } finally {
+    throughputFetchInFlight = false;
   }
 }
 
@@ -1366,33 +1621,61 @@ function navPageActive(linkPage, hash) {
 async function route() {
   document.getElementById('status').textContent = '';
   document.getElementById('error').textContent = '';
-  const hash = location.hash.replace('#','') || 'dashboard';
+  const hash = routeHash();
+  const prev = route._prevHash || '';
+  if (prev === 'devices' && hash !== 'devices') invalidateDevicesSession();
+  if (prev.startsWith('device-') && !hash.startsWith('device-')) invalidateDeviceDetailSession();
+  if (prev === 'dashboard' && hash !== 'dashboard') invalidateDashboardSession();
+  if (prev === 'throughput' && hash !== 'throughput') invalidateThroughputSession();
+  route._prevHash = hash;
+
   if (hash === 'vpn-clients' || hash.startsWith('vpn-client-')) {
     location.replace('/home-vpn/');
     return;
   }
   document.querySelectorAll('nav a[data-page]').forEach(a => a.classList.toggle('active', navPageActive(a.dataset.page, hash)));
   clearInterval(pollTimer);
+  clearInterval(presencePollTimer);
   if (!hash.startsWith('device-')) clearInterval(devicePollTimer);
   try {
     if (hash.startsWith('device-')) return await loadDevice(hash.replace('device-',''));
     if (hash === 'settings') return await loadSettings();
     if (hash === 'devices') {
-      await loadDevices();
-      pollTimer = setInterval(() => loadDevices(), POLL_MS);
+      await Promise.all([
+        loadDevices({ force: !devicesPageReady }),
+        loadDevicesPresence(),
+      ]);
+      pollTimer = setInterval(() => {
+        if (isDevicesPage() && !devicesFetchInFlight) loadDevices();
+      }, POLL_MS);
+      presencePollTimer = setInterval(() => {
+        if (isDevicesPage()) loadDevicesPresence();
+      }, PRESENCE_POLL_MS);
       return;
     }
     if (hash === 'throughput') {
-      tpNeedsBackfill = true;
+      renderThroughputShell();
       await loadThroughput();
-      pollTimer = setInterval(loadThroughput, POLL_MS);
+      pollTimer = setInterval(() => {
+        if (isThroughputPage() && !throughputFetchInFlight) loadThroughput();
+      }, POLL_MS);
       return;
     }
-    dashboardReady = false;
+    if (hash === 'dashboard') {
+      renderDashboardShell();
+      devicesPageReady = false;
+      await loadDashboard();
+      pollTimer = setInterval(() => {
+        if (isDashboardPage() && !dashboardFetchInFlight) loadDashboard();
+      }, POLL_MS);
+      return;
+    }
+    renderDashboardShell();
     devicesPageReady = false;
-    dashboardNeedsBackfill = true;
     await loadDashboard();
-    pollTimer = setInterval(loadDashboard, POLL_MS);
+    pollTimer = setInterval(() => {
+      if (isDashboardPage() && !dashboardFetchInFlight) loadDashboard();
+    }, POLL_MS);
   } catch (e) {
     document.getElementById('error').textContent = e.message;
     document.getElementById('content').innerHTML = '<div class="card"><h3>Gateway unreachable</h3><p>The home network may still work — only this admin UI is affected.</p></div>';
