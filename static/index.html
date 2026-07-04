@@ -40,9 +40,20 @@
     table { width:100%; border-collapse:collapse; table-layout:fixed; }
     th, td { text-align:left; padding:10px 12px; border-bottom:1px solid #30363d; font-size:14px; vertical-align:middle; }
     th { color:var(--muted); font-weight:600; position:sticky; top:0; z-index:2; background:var(--panel); box-shadow:0 1px 0 #30363d; }
+    th.sortable { cursor:pointer; user-select:none; }
+    th.sortable:hover { color:var(--text); }
+    th.sort-asc::after { content:' ▲'; font-size:10px; opacity:0.85; }
+    th.sort-desc::after { content:' ▼'; font-size:10px; opacity:0.85; }
     thead th { border-bottom:1px solid #30363d; }
     tr:hover { background:#22272e; }
     tr.row-highlight { background:#2d4a22 !important; outline:1px solid var(--green); }
+    td.hostname-cell { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:0; }
+    .device-badges { display:inline-flex; gap:4px; margin-left:6px; vertical-align:middle; flex-shrink:0; }
+    .activity-badge { display:inline-block; font-size:10px; font-weight:600; padding:1px 6px; border-radius:4px; line-height:1.5; cursor:default; letter-spacing:0.02em; }
+    .activity-badge-joined { background:#1a3d2e; color:var(--green); border:1px solid rgba(63,185,80,0.45); }
+    .activity-badge-new { background:#1c2d4a; color:var(--accent); border:1px solid rgba(88,166,255,0.45); }
+    .activity-legend { color:var(--muted); font-size:12px; margin:-6px 0 12px; display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; }
+    .activity-legend .activity-badge { cursor:default; }
     td.notes-cell { color:var(--muted); font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:0; }
     td.date-cell { color:var(--muted); font-size:12px; white-space:nowrap; padding-left:8px; padding-right:8px; }
     th.date-col { padding-left:8px; padding-right:8px; width:72px; white-space:nowrap; }
@@ -160,6 +171,9 @@ let dashboardNeedsBackfill = true;
 let tpNeedsBackfill = true;
 let tpRange = '5m';
 let deviceFilters = { search: '', vpn: 'all', pihole: 'all', type: 'all', link: 'all', status: 'all' };
+let deviceSort = { col: 'ip', dir: 'asc' };
+let devicesPageReady = false;
+let pendingDeviceRefresh = null;
 let networkDefaults = null;
 
 const sampleHistory = {
@@ -514,6 +528,7 @@ async function loadDashboard() {
 async function loadSettings() {
   dashboardReady = false;
   throughputReady = false;
+  devicesPageReady = false;
   const s = await api('/settings');
   networkDefaults = s.network_defaults;
   const n = s.network_defaults;
@@ -578,6 +593,88 @@ function fmtStatusLabel(connected) {
   return '—';
 }
 
+function fmtHostnameCell(d) {
+  let html = esc(d.hostname);
+  const badges = [];
+  if (d.recently_joined && d.network_joined_at) {
+    badges.push(`<span class="activity-badge activity-badge-joined" title="Joined network ${fmtDate(d.network_joined_at)} (within the last 60 minutes)">Joined</span>`);
+  }
+  if (d.recently_registered && d.registered_at) {
+    badges.push(`<span class="activity-badge activity-badge-new" title="Registered ${fmtDate(d.registered_at)} (within the last 60 minutes)">New</span>`);
+  }
+  if (badges.length) html += `<span class="device-badges">${badges.join('')}</span>`;
+  return html;
+}
+
+function activityLegendHtml() {
+  return `<p class="activity-legend">Badges:
+    <span class="activity-badge activity-badge-joined" title="Known device that was offline and joined the network within the last 60 minutes">Joined</span>
+    <span>returned to network</span>
+    <span class="activity-badge activity-badge-new" title="MAC address registered in the gateway for the first time within the last 60 minutes">New</span>
+    <span>first-time registration</span>
+  </p>`;
+}
+
+function compareIp(a, b) {
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
+  for (let i = 0; i < 4; i++) {
+    if (pa[i] !== pb[i]) return pa[i] - pb[i];
+  }
+  return 0;
+}
+
+function compareStatus(a, b) {
+  const rank = v => (v === true ? 0 : v === false ? 1 : 2);
+  return rank(a) - rank(b);
+}
+
+function sortDevices(devices) {
+  const { col, dir } = deviceSort;
+  const mul = dir === 'asc' ? 1 : -1;
+  return [...devices].sort((a, b) => {
+    let cmp = 0;
+    switch (col) {
+      case 'ip': cmp = compareIp(a.ip, b.ip); break;
+      case 'hostname': cmp = (a.hostname || '').localeCompare(b.hostname || '', undefined, { sensitivity: 'base' }); break;
+      case 'status': cmp = compareStatus(a.connected, b.connected); break;
+      case 'vpn': cmp = (a.vpn_mode || '').localeCompare(b.vpn_mode || ''); break;
+      case 'pihole': cmp = Number(!!a.use_pihole) - Number(!!b.use_pihole); break;
+      case 'type': cmp = Number(!!a.reserved) - Number(!!b.reserved); break;
+      case 'first_seen': cmp = (a.first_seen_at || '').localeCompare(b.first_seen_at || ''); break;
+      case 'last_renew': cmp = (a.last_renewed_at || '').localeCompare(b.last_renewed_at || ''); break;
+      case 'rx': cmp = (a.rx_bps || 0) - (b.rx_bps || 0); break;
+      case 'tx': cmp = (a.tx_bps || 0) - (b.tx_bps || 0); break;
+      case 'link': cmp = (a.link_type || '').localeCompare(b.link_type || '', undefined, { sensitivity: 'base' }); break;
+      case 'notes': cmp = (a.notes || '').localeCompare(b.notes || '', undefined, { sensitivity: 'base' }); break;
+      default: cmp = compareIp(a.ip, b.ip);
+    }
+    if (cmp === 0) cmp = compareIp(a.ip, b.ip);
+    return cmp * mul;
+  });
+}
+
+function setDeviceSort(col, event) {
+  event?.stopPropagation();
+  if (deviceSort.col === col) {
+    deviceSort.dir = deviceSort.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    deviceSort.col = col;
+    deviceSort.dir = 'asc';
+  }
+  updateSortHeaders();
+  loadDevices({ force: true });
+}
+
+function updateSortHeaders() {
+  document.querySelectorAll('th[data-sort]').forEach(th => {
+    th.classList.remove('sort-asc', 'sort-desc');
+    if (th.dataset.sort === deviceSort.col) {
+      th.classList.add(deviceSort.dir === 'asc' ? 'sort-asc' : 'sort-desc');
+    }
+  });
+}
+
 function filterDevices(devices) {
   const q = deviceFilters.search.trim().toLowerCase();
   return devices.filter(d => {
@@ -604,28 +701,39 @@ function filterDevices(devices) {
 function vpnToggleHtml(d) {
   const pfLocked = d.ip === PIFIREWALL_IP;
   const gwLocked = d.ip === GATEWAY_IP;
-  const canRoute = d.reserved && !pfLocked;
-  const on = gwLocked || d.vpn_mode === 'routed';
+  const on = !!d.effective_vpn_routed;
+  const canToggle = d.reserved && !pfLocked && !gwLocked;
   if (gwLocked) {
-    return `<span class="toggle on disabled" title="Gateway — Obscura VPN always on">●</span>`;
+    return `<span class="toggle on disabled" title="Obscura VPN active (gateway)">●</span>`;
   }
-  if (pfLocked || !canRoute && !on) {
-    return `<span class="toggle off disabled" title="Reserved only (or locked bypass)">○</span>`;
+  if (pfLocked) {
+    return `<span class="toggle off disabled" title="Bypass VPN (PiFirewall)">○</span>`;
+  }
+  if (!canToggle) {
+    const title = on ? 'Obscura VPN active' : 'Local internet (reserve to enable VPN option)';
+    return `<span class="toggle ${on ? 'on' : 'off'} disabled" title="${title}">${on ? '●' : '○'}</span>`;
   }
   const cls = on ? 'on' : 'off';
   const sym = on ? '●' : '○';
-  return `<span class="toggle ${cls}" onclick="toggleGridVpn('${d.ip}', ${!on}, event)" title="Toggle Obscura VPN">${sym}</span>`;
+  const title = on ? 'Obscura VPN active — click to bypass' : 'Local internet — click for Obscura VPN';
+  return `<span class="toggle ${cls}" onclick="toggleGridVpn('${d.ip}', ${!on}, event)" title="${title}">${sym}</span>`;
 }
 
 function piholeToggleHtml(d) {
   const gwLocked = d.ip === GATEWAY_IP;
-  const on = gwLocked || d.use_pihole;
+  const on = !!d.effective_use_pihole;
+  const canToggle = d.reserved && !gwLocked;
   if (gwLocked) {
-    return `<span class="toggle on disabled" title="Gateway — Pi-hole DNS always on">●</span>`;
+    return `<span class="toggle on disabled" title="Pi-hole DNS active (gateway)">●</span>`;
+  }
+  if (!canToggle) {
+    const title = on ? 'Pi-hole DNS active' : 'Public DNS (reserve to enable Pi-hole option)';
+    return `<span class="toggle ${on ? 'on' : 'off'} disabled" title="${title}">${on ? '●' : '○'}</span>`;
   }
   const cls = on ? 'on' : 'off';
   const sym = on ? '●' : '○';
-  return `<span class="toggle ${cls}" onclick="toggleGridPihole('${d.ip}', ${!on}, event)" title="Toggle Pi-hole DNS">${sym}</span>`;
+  const title = on ? 'Pi-hole DNS active — click for public DNS' : 'Public DNS — click for Pi-hole';
+  return `<span class="toggle ${cls}" onclick="toggleGridPihole('${d.ip}', ${!on}, event)" title="${title}">${sym}</span>`;
 }
 
 async function toggleGridVpn(ip, routed, event) {
@@ -637,7 +745,7 @@ async function toggleGridVpn(ip, routed, event) {
   try {
     await api('/devices/' + ip, { method:'PUT', body: JSON.stringify({ vpn_mode: routed ? 'routed' : 'bypass' }) });
     showStatus(`VPN ${routed ? 'routed via Obscura' : 'set to bypass'} — applied`);
-    await loadDevices();
+    await loadDevices({ force: true });
   } catch (e) {
     setCellBusy(row, '.toggle-cell', false);
     document.getElementById('error').textContent = e.message;
@@ -655,7 +763,7 @@ async function toggleGridPihole(ip, usePihole, event) {
   try {
     await api('/devices/' + ip, { method:'PUT', body: JSON.stringify({ use_pihole: usePihole }) });
     showStatus(`Pi-hole DNS ${usePihole ? 'enabled' : 'disabled'} — applied`);
-    await loadDevices();
+    await loadDevices({ force: true });
   } catch (e) {
     setCellBusy(row, '.pihole-cell', false);
     document.getElementById('error').textContent = e.message;
@@ -686,10 +794,59 @@ function onDeviceRowDblClick(ip, event) {
   openDeviceDetail(ip, event);
 }
 
-function renderDeviceRows(devices) {
-  return devices.map(d => `<tr data-ip="${d.ip}" ondblclick="onDeviceRowDblClick('${d.ip}', event)">
-    <td>${esc(d.ip)}</td>
-    <td>${esc(d.hostname)}</td>
+function detailCellHtml(ip) {
+  return `<button type="button" class="btn-detail" onclick="openDeviceDetail('${ip}', event)">Open</button>`;
+}
+
+function devicesTableHasSelection() {
+  const sel = window.getSelection();
+  if (!sel || !sel.rangeCount) return false;
+  const range = sel.getRangeAt(0);
+  if (range.collapsed) return false;
+  const table = document.querySelector('.devices-table-wrap');
+  if (!table) return false;
+  return table.contains(range.commonAncestorContainer);
+}
+
+function setCellHtml(td, html) {
+  if (td && td.innerHTML !== html) td.innerHTML = html;
+}
+
+function tableOrderMatches(tbody, filtered) {
+  const rows = tbody.querySelectorAll('tr[data-ip]');
+  if (rows.length !== filtered.length) return false;
+  for (let i = 0; i < filtered.length; i++) {
+    if (rows[i].dataset.ip !== filtered[i].ip) return false;
+  }
+  return true;
+}
+
+function deviceRowState(d) {
+  return JSON.stringify({
+    ip: d.ip,
+    hostname: d.hostname,
+    recently_joined: !!d.recently_joined,
+    recently_registered: !!d.recently_registered,
+    network_joined_at: d.network_joined_at,
+    registered_at: d.registered_at,
+    connected: d.connected,
+    vpn_mode: d.vpn_mode,
+    use_pihole: d.use_pihole,
+    effective_vpn_routed: !!d.effective_vpn_routed,
+    effective_use_pihole: !!d.effective_use_pihole,
+    reserved: d.reserved,
+    first_seen_at: d.first_seen_at,
+    last_renewed_at: d.last_renewed_at,
+    rx: fmtRateCell(d.rx_bps),
+    tx: fmtRateCell(d.tx_bps),
+    link_type: d.link_type || '',
+    notes: d.notes || '',
+  });
+}
+
+function deviceCellsHtml(d) {
+  return `<td>${esc(d.ip)}</td>
+    <td class="hostname-cell">${fmtHostnameCell(d)}</td>
     <td class="status-cell">${fmtStatusCell(d.connected)}</td>
     <td class="toggle-cell">${vpnToggleHtml(d)}</td>
     <td class="pihole-cell">${piholeToggleHtml(d)}</td>
@@ -700,84 +857,179 @@ function renderDeviceRows(devices) {
     <td class="rate-cell">${fmtRateCell(d.tx_bps)}</td>
     <td class="link-cell">${fmtLinkCell(d.link_type)}</td>
     <td class="notes-cell" title="${esc(d.notes||'')}">${esc(d.notes||'')}</td>
-    <td class="detail-cell"><button type="button" class="btn-detail" onclick="openDeviceDetail('${d.ip}', event)">Open</button></td>
-  </tr>`).join('');
+    <td class="detail-cell">${detailCellHtml(d.ip)}</td>`;
 }
 
-async function loadDevices() {
-  readDeviceFilters();
-  const wrap = document.querySelector('.devices-table-wrap');
-  const savedScroll = wrap ? wrap.scrollTop : 0;
-  const scrollToHighlight = !!sessionStorage.getItem('highlightIp');
+function createDeviceRow(d) {
+  const tr = document.createElement('tr');
+  tr.dataset.ip = d.ip;
+  tr.addEventListener('dblclick', (e) => onDeviceRowDblClick(d.ip, e));
+  tr.innerHTML = deviceCellsHtml(d);
+  tr.dataset.state = deviceRowState(d);
+  return tr;
+}
 
-  const devices = await api('/devices');
-  const tp = await api('/throughput');
-  pushHistory(tp, devices);
-  const filtered = filterDevices(devices);
+function updateDeviceRowCells(tr, d) {
+  const cells = tr.children;
+  setCellHtml(cells[0], esc(d.ip));
+  setCellHtml(cells[1], fmtHostnameCell(d));
+  setCellHtml(cells[2], fmtStatusCell(d.connected));
+  const vpnHtml = vpnToggleHtml(d);
+  if (cells[3].innerHTML !== vpnHtml) cells[3].innerHTML = vpnHtml;
+  const piholeHtml = piholeToggleHtml(d);
+  if (cells[4].innerHTML !== piholeHtml) cells[4].innerHTML = piholeHtml;
+  setCellHtml(cells[5], d.reserved ? 'Reserved' : 'Dynamic');
+  setCellHtml(cells[6], fmtDateCell(d.first_seen_at));
+  setCellHtml(cells[7], fmtDateCell(d.last_renewed_at));
+  setCellHtml(cells[8], fmtRateCell(d.rx_bps));
+  setCellHtml(cells[9], fmtRateCell(d.tx_bps));
+  setCellHtml(cells[10], fmtLinkCell(d.link_type));
+  const noteText = d.notes || '';
+  if (cells[11].textContent !== noteText) {
+    cells[11].innerHTML = esc(noteText);
+    cells[11].title = noteText;
+  }
+  if (cells[12] && !cells[12].querySelector('.btn-detail')) {
+    cells[12].innerHTML = detailCellHtml(d.ip);
+  }
+  tr.dataset.state = deviceRowState(d);
+}
 
+function updateDeviceRow(tr, d) {
+  const next = deviceRowState(d);
+  if (tr.dataset.state === next) return;
+  updateDeviceRowCells(tr, d);
+}
+
+function flushPendingDeviceRefresh() {
+  if (!pendingDeviceRefresh || devicesTableHasSelection()) return;
+  refreshDeviceTableBody(pendingDeviceRefresh, { force: true });
+  pendingDeviceRefresh = null;
+}
+
+function refreshDeviceTableBody(filtered, { force = false } = {}) {
   const tbody = document.querySelector('.devices-table-wrap tbody');
-  const countEl = document.querySelector('.page-toolbar .count');
-  if (tbody && document.getElementById('dev-search')) {
-    tbody.innerHTML = renderDeviceRows(filtered);
-    if (countEl) countEl.textContent = `${filtered.length} of ${devices.length} devices`;
-    if (wrap) wrap.scrollTop = savedScroll;
+  if (!tbody) return;
+
+  if (!force && devicesTableHasSelection()) {
+    pendingDeviceRefresh = filtered;
     return;
   }
+  pendingDeviceRefresh = null;
 
+  const existing = new Map([...tbody.querySelectorAll('tr[data-ip]')].map(tr => [tr.dataset.ip, tr]));
+  const nextIps = new Set(filtered.map(d => d.ip));
+
+  for (const tr of existing.values()) {
+    if (!nextIps.has(tr.dataset.ip)) tr.remove();
+  }
+
+  for (const d of filtered) {
+    let tr = tbody.querySelector(`tr[data-ip="${CSS.escape(d.ip)}"]`);
+    if (!tr) {
+      tr = createDeviceRow(d);
+      tbody.appendChild(tr);
+    } else {
+      updateDeviceRow(tr, d);
+    }
+  }
+
+  if (!tableOrderMatches(tbody, filtered)) {
+    for (const d of filtered) {
+      const tr = tbody.querySelector(`tr[data-ip="${CSS.escape(d.ip)}"]`);
+      if (tr) tbody.appendChild(tr);
+    }
+  }
+}
+
+function renderDevicesShell(filteredCount, totalCount) {
   document.getElementById('content').innerHTML = `
     <h1>Devices</h1>
     <div class="page-toolbar">
-      <input id="dev-search" type="search" placeholder="Search hostname, IP, MAC…" value="${esc(deviceFilters.search)}" oninput="loadDevices()">
-      <select id="dev-filter-vpn" onchange="loadDevices()">
+      <input id="dev-search" type="search" placeholder="Search hostname, IP, MAC…" value="${esc(deviceFilters.search)}" oninput="loadDevices({force:true})">
+      <select id="dev-filter-vpn" onchange="loadDevices({force:true})">
         <option value="all" ${deviceFilters.vpn==='all'?'selected':''}>VPN: All</option>
         <option value="routed" ${deviceFilters.vpn==='routed'?'selected':''}>VPN: Routed</option>
         <option value="bypass" ${deviceFilters.vpn==='bypass'?'selected':''}>VPN: Bypass</option>
       </select>
-      <select id="dev-filter-pihole" onchange="loadDevices()">
+      <select id="dev-filter-pihole" onchange="loadDevices({force:true})">
         <option value="all" ${deviceFilters.pihole==='all'?'selected':''}>Pi-hole: All</option>
         <option value="on" ${deviceFilters.pihole==='on'?'selected':''}>Pi-hole: On</option>
         <option value="off" ${deviceFilters.pihole==='off'?'selected':''}>Pi-hole: Off</option>
       </select>
-      <select id="dev-filter-type" onchange="loadDevices()">
+      <select id="dev-filter-type" onchange="loadDevices({force:true})">
         <option value="all" ${deviceFilters.type==='all'?'selected':''}>Type: All</option>
         <option value="reserved" ${deviceFilters.type==='reserved'?'selected':''}>Type: Reserved</option>
         <option value="dynamic" ${deviceFilters.type==='dynamic'?'selected':''}>Type: Dynamic</option>
       </select>
-      <select id="dev-filter-link" onchange="loadDevices()">
+      <select id="dev-filter-link" onchange="loadDevices({force:true})">
         <option value="all" ${deviceFilters.link==='all'?'selected':''}>Link: All</option>
         <option value="wired" ${deviceFilters.link==='wired'?'selected':''}>Link: Wired</option>
         <option value="2.4" ${deviceFilters.link==='2.4'?'selected':''}>Link: 2.4 GHz</option>
         <option value="5" ${deviceFilters.link==='5'?'selected':''}>Link: 5 GHz</option>
         <option value="unknown" ${deviceFilters.link==='unknown'?'selected':''}>Link: Unknown</option>
       </select>
-      <select id="dev-filter-status" onchange="loadDevices()">
+      <select id="dev-filter-status" onchange="loadDevices({force:true})">
         <option value="all" ${deviceFilters.status==='all'?'selected':''}>Status: All</option>
         <option value="online" ${deviceFilters.status==='online'?'selected':''}>Status: Online</option>
         <option value="offline" ${deviceFilters.status==='offline'?'selected':''}>Status: Offline</option>
       </select>
-      <span class="count">${filtered.length} of ${devices.length} devices</span>
+      <span class="count">${filteredCount} of ${totalCount} devices</span>
     </div>
+    ${activityLegendHtml()}
     <div class="devices-table-wrap"><table>
       <thead><tr>
-        <th style="width:120px">IP</th>
-        <th style="width:140px">Host</th>
-        <th class="status-col">Status</th>
-        <th style="width:48px">VPN</th>
-        <th style="width:48px">PiHole</th>
-        <th style="width:80px">Type</th>
-        <th class="date-col" style="width:150px">First seen</th>
-        <th class="date-col" style="width:150px">Last renew</th>
-        <th class="rate-col">↓ Mbps</th>
-        <th class="rate-col">↑ Mbps</th>
-        <th class="link-col">Link</th>
-        <th class="notes-col">Notes</th>
+        <th class="sortable" style="width:120px" data-sort="ip" onclick="setDeviceSort('ip', event)">IP</th>
+        <th class="sortable" style="width:180px" data-sort="hostname" onclick="setDeviceSort('hostname', event)">Host</th>
+        <th class="sortable status-col" data-sort="status" onclick="setDeviceSort('status', event)">Status</th>
+        <th class="sortable" style="width:48px" data-sort="vpn" onclick="setDeviceSort('vpn', event)">VPN</th>
+        <th class="sortable" style="width:48px" data-sort="pihole" onclick="setDeviceSort('pihole', event)">PiHole</th>
+        <th class="sortable" style="width:80px" data-sort="type" onclick="setDeviceSort('type', event)">Type</th>
+        <th class="sortable date-col" style="width:150px" data-sort="first_seen" onclick="setDeviceSort('first_seen', event)">First seen</th>
+        <th class="sortable date-col" style="width:150px" data-sort="last_renew" onclick="setDeviceSort('last_renew', event)">Last renew</th>
+        <th class="sortable rate-col" data-sort="rx" onclick="setDeviceSort('rx', event)">↓ Mbps</th>
+        <th class="sortable rate-col" data-sort="tx" onclick="setDeviceSort('tx', event)">↑ Mbps</th>
+        <th class="sortable link-col" data-sort="link" onclick="setDeviceSort('link', event)">Link</th>
+        <th class="sortable notes-col" data-sort="notes" onclick="setDeviceSort('notes', event)">Notes</th>
         <th class="detail-col">Details</th>
       </tr></thead>
-      <tbody>${renderDeviceRows(filtered)}</tbody>
+      <tbody></tbody>
     </table></div>`;
+  devicesPageReady = true;
+  updateSortHeaders();
+}
+
+async function loadDevices({ force = false } = {}) {
+  readDeviceFilters();
+  const wrapBefore = document.querySelector('.devices-table-wrap');
+  const savedScroll = wrapBefore ? wrapBefore.scrollTop : 0;
+  const scrollToHighlight = !!sessionStorage.getItem('highlightIp');
+
+  const devices = await api('/devices');
+  const tp = await api('/throughput');
+  pushHistory(tp, devices);
+  const filtered = sortDevices(filterDevices(devices));
+
+  const countEl = document.querySelector('.page-toolbar .count');
+  if (!force && devicesTableHasSelection()) {
+    pendingDeviceRefresh = filtered;
+    if (countEl) countEl.textContent = `${filtered.length} of ${devices.length} devices`;
+    return;
+  }
+
+  if (!devicesPageReady || !document.getElementById('dev-search')) {
+    renderDevicesShell(filtered.length, devices.length);
+    force = true;
+  } else if (countEl) {
+    countEl.textContent = `${filtered.length} of ${devices.length} devices`;
+  }
+
+  pendingDeviceRefresh = null;
+  refreshDeviceTableBody(filtered, { force: true });
+
   if (!scrollToHighlight) {
-    const newWrap = document.querySelector('.devices-table-wrap');
-    if (newWrap) newWrap.scrollTop = savedScroll;
+    const wrap = document.querySelector('.devices-table-wrap');
+    if (wrap) wrap.scrollTop = savedScroll;
   }
   applyHighlight();
 }
@@ -785,7 +1037,7 @@ async function loadDevices() {
 function dnsLabel(d, settings) {
   if (!settings) return '—';
   const n = settings.network_defaults || settings;
-  if (d.use_pihole) {
+  if (d.effective_use_pihole) {
     const sec = n.pihole_dns_secondary ? ` / ${n.pihole_dns_secondary}` : '';
     return `${n.pihole_dns_primary}${sec}`;
   }
@@ -797,6 +1049,7 @@ async function loadDevice(ip) {
   clearInterval(devicePollTimer);
   dashboardReady = false;
   throughputReady = false;
+  devicesPageReady = false;
   sampleHistory.clear();
   await backfillHistory('15m', ip);
   const [d, tp, settings] = await Promise.all([
@@ -810,22 +1063,24 @@ async function loadDevice(ip) {
   const vpnLocked = d.ip === PIFIREWALL_IP;
   const gatewayLocked = d.ip === GATEWAY_IP;
   const routedDisabled = !d.reserved || vpnLocked || gatewayLocked;
+  const policyLocked = !d.reserved && !gatewayLocked;
   const vpnBypassChecked = (gatewayLocked ? false : d.vpn_mode !== 'routed') ? 'checked' : '';
   const vpnRoutedChecked = (gatewayLocked || d.vpn_mode === 'routed') ? 'checked' : '';
   const piholeOffChecked = (gatewayLocked ? false : !d.use_pihole) ? 'checked' : '';
   const piholeOnChecked = (gatewayLocked || d.use_pihole) ? 'checked' : '';
-  const routeLabel = gatewayLocked || d.vpn_mode === 'routed' ? 'via Obscura VPN' : 'direct (home IP)';
+  const routeLabel = d.effective_vpn_routed ? 'via Obscura VPN' : 'direct (home IP)';
+  const dnsActive = dnsLabel(d, settings);
   const reservationBlock = d.reserved
     ? (d.ip === GATEWAY_IP
       ? `<p style="color:var(--muted);font-size:13px;margin:0">Fixed reservation — gateway cannot be removed.</p>`
       : `<p style="color:var(--muted);font-size:13px;margin:0 0 8px">Fixed DHCP reservation at ${esc(d.ip)}</p>
          <button type="button" class="secondary danger" onclick="removeReservation('${d.ip}', event)">Remove reservation</button>`)
-    : `<p style="color:var(--muted);font-size:13px;margin:0 0 8px">Dynamic lease (sticky pool). Reserve to lock this IP and enable VPN routing.</p>
+    : `<p style="color:var(--muted);font-size:13px;margin:0 0 8px">Dynamic lease (sticky pool). Traffic uses <strong>local internet</strong> and <strong>public DNS</strong> until you reserve and opt in.</p>
        <button type="button" id="reserve-btn" onclick="reserveDevice('${d.ip}', event)">Reserve IP</button>`;
 
   document.getElementById('content').innerHTML = `
     <div class="device-header">
-      <h1>${esc(d.hostname)} <small>${esc(d.ip)}</small></h1>
+      <h1>${esc(d.hostname)} ${d.recently_joined || d.recently_registered ? `<span class="device-badges">${d.recently_joined && d.network_joined_at ? `<span class="activity-badge activity-badge-joined" title="Joined network ${fmtDate(d.network_joined_at)} (within the last 60 minutes)">Joined</span>` : ''}${d.recently_registered && d.registered_at ? `<span class="activity-badge activity-badge-new" title="Registered ${fmtDate(d.registered_at)} (within the last 60 minutes)">New</span>` : ''}</span>` : ''}<small>${esc(d.ip)}</small></h1>
       <div class="device-reservation">${reservationBlock}</div>
     </div>
     <div class="cards">
@@ -845,9 +1100,12 @@ async function loadDevice(ip) {
           <div><dt>First seen</dt><dd>${fmtDate(d.first_seen_at)}</dd></div>
           <div><dt>Last renew</dt><dd>${fmtDate(d.last_renewed_at)}</dd></div>
           <div><dt>Lease expires</dt><dd>${fmtDate(d.lease_expires_at)} <span class="card-sub">(${fmtRelative(d.lease_expires_at)})</span></dd></div>
-          <div><dt>DNS servers</dt><dd>${esc(dnsLabel(d, settings))}</dd></div>
+          <div><dt>DNS servers (active)</dt><dd>${esc(dnsActive)}</dd></div>
+          <div><dt>Traffic path (active)</dt><dd>${routeLabel}</dd></div>
           <div><dt>MAC</dt><dd>${esc(d.mac)}</dd></div>
           <div><dt>Network status</dt><dd>${fmtStatusLabel(d.connected)}</dd></div>
+          ${d.recently_joined && d.network_joined_at ? `<div><dt>Joined network</dt><dd>${fmtDate(d.network_joined_at)} <span class="card-sub">(${fmtRelative(d.network_joined_at)})</span></dd></div>` : ''}
+          ${d.recently_registered && d.registered_at ? `<div><dt>Registered</dt><dd>${fmtDate(d.registered_at)} <span class="card-sub">(${fmtRelative(d.registered_at)})</span></dd></div>` : ''}
           <div><dt>Connection</dt><dd>${d.link_type ? esc(d.link_type) : '—'}</dd></div>
           <div><dt>DHCP type</dt><dd>${d.reserved ? 'Reserved' : 'Dynamic'}</dd></div>
         </dl>
@@ -860,21 +1118,22 @@ async function loadDevice(ip) {
       </div>
       <div class="row"><label>Obscura VPN</label>
         ${gatewayLocked ? `<p style="color:var(--muted);font-size:13px;margin:0 0 8px">Gateway node — always routed via Obscura.</p>` : ''}
-        ${!d.reserved && !vpnLocked && !gatewayLocked ? `<p style="color:var(--muted);font-size:13px;margin:0 0 8px">Reserve this device to enable routed VPN.</p>` : ''}
+        ${!d.reserved && !vpnLocked && !gatewayLocked ? `<p style="color:var(--muted);font-size:13px;margin:0 0 8px">Currently using local internet and public DNS. Reserve this device to change VPN or Pi-hole settings.</p>` : ''}
         <div class="radio-group" id="vpn-group">
-          <label class="option ${vpnLocked || gatewayLocked ? 'disabled' : ''}">
-            <input type="radio" name="vpn" value="bypass" ${vpnBypassChecked} ${vpnLocked || gatewayLocked ? 'disabled' : ''}> Bypass (home IP)
+          <label class="option ${vpnLocked || gatewayLocked || policyLocked ? 'disabled' : ''}">
+            <input type="radio" name="vpn" value="bypass" ${vpnBypassChecked} ${vpnLocked || gatewayLocked || policyLocked ? 'disabled' : ''}> Bypass (home IP)
           </label>
           <label class="option ${routedDisabled ? 'disabled' : ''}">
             <input type="radio" name="vpn" value="routed" ${vpnRoutedChecked} ${routedDisabled ? 'disabled' : ''}> Routed (Obscura)
           </label>
         </div>
       </div>
-      <div class="row"><label>Pi-hole DNS (forced per device)</label>
+      <div class="row"><label>Pi-hole DNS</label>
         ${gatewayLocked ? `<p style="color:var(--muted);font-size:13px;margin:0 0 8px">Gateway node — Pi-hole DNS always on.</p>` : ''}
+        ${policyLocked ? `<p style="color:var(--muted);font-size:13px;margin:0 0 8px">Public DNS is active until this device is reserved.</p>` : ''}
         <div class="radio-group">
-          <label class="option ${gatewayLocked ? 'disabled' : ''}"><input type="radio" name="pihole" value="true" ${piholeOnChecked} ${gatewayLocked ? 'disabled' : ''}> Forced on — Pi-hole DNS (.11 / .4)</label>
-          <label class="option ${gatewayLocked ? 'disabled' : ''}"><input type="radio" name="pihole" value="false" ${piholeOffChecked} ${gatewayLocked ? 'disabled' : ''}> Forced off — public DNS</label>
+          <label class="option ${gatewayLocked || policyLocked ? 'disabled' : ''}"><input type="radio" name="pihole" value="true" ${piholeOnChecked} ${gatewayLocked || policyLocked ? 'disabled' : ''}> Pi-hole DNS (.11 / .4)</label>
+          <label class="option ${gatewayLocked || policyLocked ? 'disabled' : ''}"><input type="radio" name="pihole" value="false" ${piholeOffChecked} ${gatewayLocked || policyLocked ? 'disabled' : ''}> Public DNS</label>
         </div>
       </div>
       <div class="row notes-field"><label>Notes</label><textarea id="notes"></textarea></div>
@@ -1120,7 +1379,7 @@ async function route() {
     if (hash === 'settings') return await loadSettings();
     if (hash === 'devices') {
       await loadDevices();
-      pollTimer = setInterval(loadDevices, POLL_MS);
+      pollTimer = setInterval(() => loadDevices(), POLL_MS);
       return;
     }
     if (hash === 'throughput') {
@@ -1130,6 +1389,7 @@ async function route() {
       return;
     }
     dashboardReady = false;
+    devicesPageReady = false;
     dashboardNeedsBackfill = true;
     await loadDashboard();
     pollTimer = setInterval(loadDashboard, POLL_MS);
@@ -1139,6 +1399,8 @@ async function route() {
   }
 }
 window.addEventListener('hashchange', route);
+document.addEventListener('selectionchange', flushPendingDeviceRefresh);
+document.addEventListener('mouseup', flushPendingDeviceRefresh);
 route();
 </script>
 </body>
