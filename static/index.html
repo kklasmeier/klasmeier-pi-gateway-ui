@@ -119,6 +119,11 @@
     .section-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap; margin-bottom:8px; }
     .section-head > :first-child { flex:1 1 auto; min-width:0; margin:0; }
     .section-head a { flex:0 0 auto; margin-left:auto; font-size:13px; text-align:right; white-space:nowrap; }
+    .usage-table { width:100%; margin-top:8px; table-layout:auto; }
+    .usage-table th, .usage-table td { text-align:right; padding:8px 12px; font-variant-numeric:tabular-nums; }
+    .usage-table th:first-child, .usage-table td:first-child { text-align:left; }
+    .usage-table tr:last-child td { font-weight:600; border-top:1px solid #30363d; }
+    .usage-unavail { color:var(--muted); font-size:13px; margin:8px 0 0; }
     @media (max-width:800px) {
       .layout { flex-direction:column; }
       nav { width:auto; min-height:auto; }
@@ -167,6 +172,7 @@ const GRAFANA_TRAFFIC = 'http://192.168.1.16:3000/d/f47ac10b-58cc-4372-a567-0e02
 const HISTORY_MAX_MS = 60 * 60 * 1000;
 const POLL_MS = 5000;
 const PRESENCE_POLL_MS = 30000;
+const USAGE_POLL_MS = 60000;
 const LIVE_TAIL_MS = 10000;
 let pollTimer;
 let devicePollTimer;
@@ -189,6 +195,7 @@ let deviceDetailSessionId = 0;
 let dashboardSessionId = 0;
 let throughputSessionId = 0;
 let dashboardFetchInFlight = false;
+let usageSummaryFetchedAt = 0;
 let throughputFetchInFlight = false;
 let searchDebounceTimer = null;
 const SEARCH_DEBOUNCE_MS = 350;
@@ -562,6 +569,18 @@ function renderDashboardShell() {
       </div>
       <p id="dash-tp-now" style="margin:10px 0 0;font-size:14px">—</p>
     </div>
+    <div class="card" style="margin-bottom:20px">
+      <div class="section-head">
+        <h3 style="margin:0">Internet usage (GB)</h3>
+      </div>
+      <div id="dash-usage-wrap">
+        <table class="usage-table">
+          <thead><tr id="dash-usage-head"><th>Path</th><th colspan="5">Loading…</th></tr></thead>
+          <tbody id="dash-usage-body"><tr><td colspan="6" style="text-align:center;color:var(--muted)">—</td></tr></tbody>
+        </table>
+        <p id="dash-usage-meta" class="usage-unavail"></p>
+      </div>
+    </div>
     <div class="cards">
       <div class="card"><h3>Policy</h3><p id="dash-policy">—</p></div>
     </div>`;
@@ -592,6 +611,65 @@ function refreshDashboardView(status, tp) {
   return true;
 }
 
+const USAGE_COL_LABELS = {
+  today: 'Today',
+  yesterday: 'Yesterday',
+  last_7_days: 'Last 7 days',
+  last_8_14_days: 'Last 8–14 days',
+  last_30_days: 'Last 30 days',
+  last_31_60_days: 'Last 31–60 days',
+  this_year: 'This year',
+  last_year: 'Last year',
+};
+
+function fmtUsageGb(value) {
+  if (value == null || value !== value) return '—';
+  if (value < 0.001) return '<0.001';
+  if (value < 10) return value.toFixed(2);
+  if (value < 100) return value.toFixed(1);
+  return Math.round(value).toString();
+}
+
+function refreshUsageSummaryView(summary) {
+  const head = document.getElementById('dash-usage-head');
+  const body = document.getElementById('dash-usage-body');
+  const meta = document.getElementById('dash-usage-meta');
+  if (!head || !body) return false;
+
+  const cols = summary.columns || [];
+  head.innerHTML = '<th>Path</th>' + cols.map(c =>
+    `<th>${USAGE_COL_LABELS[c] || c}</th>`).join('');
+
+  body.innerHTML = (summary.rows || []).map(row => {
+    const cells = cols.map(c => fmtUsageGb(row.values?.[c])).join('</td><td>');
+    return `<tr><td>${row.label}</td><td>${cells}</td></tr>`;
+  }).join('');
+
+    if (meta) {
+    const asOf = summary.as_of ? `Updated ${summary.as_of}` : '';
+    const notes = [];
+    if (summary.prometheus_ok === false) notes.push('Prometheus unavailable — totals may be incomplete');
+    if (summary.rollup_ok === false) notes.push('Daily rollups unavailable — long ranges use Prometheus only');
+    meta.textContent = [asOf, notes.join(' · ')].filter(Boolean).join(' · ');
+    meta.className = notes.length ? 'usage-unavail warn' : 'usage-unavail';
+  }
+  return true;
+}
+
+function refreshUsageSummaryError(message) {
+  const head = document.getElementById('dash-usage-head');
+  const body = document.getElementById('dash-usage-body');
+  const meta = document.getElementById('dash-usage-meta');
+  if (!head || !body) return false;
+  head.innerHTML = '<th>Path</th><th colspan="5" style="text-align:center">Unavailable</th>';
+  body.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--muted)">${esc(message || 'Could not load usage totals')}</td></tr>`;
+  if (meta) {
+    meta.textContent = '';
+    meta.className = 'usage-unavail warn';
+  }
+  return true;
+}
+
 async function loadDashboard() {
   if (dashboardFetchInFlight) return;
   const session = dashboardSessionId;
@@ -606,12 +684,32 @@ async function loadDashboard() {
         })
       : Promise.resolve();
 
-    const [status, tp] = await Promise.all([api('/status'), api('/throughput')]);
+    const needUsage = !usageSummaryFetchedAt || (Date.now() - usageSummaryFetchedAt >= USAGE_POLL_MS);
+    let usageSummary = null;
+    let usageError = null;
+    const usageP = needUsage
+      ? api('/usage-summary').then(u => {
+          if (session === dashboardSessionId) usageSummaryFetchedAt = Date.now();
+          return u;
+        }).catch(err => {
+          usageError = err?.message || 'Usage summary unavailable';
+          return null;
+        })
+      : Promise.resolve(null);
+
+    const [status, tp, usageResult] = await Promise.all([
+      api('/status'),
+      api('/throughput'),
+      usageP,
+    ]);
+    usageSummary = usageResult;
     if (!isDashboardPage() || session !== dashboardSessionId) return;
 
     pushHistory(tp, null);
     updateHeaderStatus(status);
     refreshDashboardView(status, tp);
+    if (usageSummary) refreshUsageSummaryView(usageSummary);
+    else if (usageError) refreshUsageSummaryError(usageError);
 
     await backfillP;
     if (!isDashboardPage() || session !== dashboardSessionId) return;
@@ -1664,6 +1762,7 @@ async function route() {
     if (hash === 'dashboard') {
       renderDashboardShell();
       devicesPageReady = false;
+      usageSummaryFetchedAt = 0;
       await loadDashboard();
       pollTimer = setInterval(() => {
         if (isDashboardPage() && !dashboardFetchInFlight) loadDashboard();
