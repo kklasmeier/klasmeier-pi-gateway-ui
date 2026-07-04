@@ -10,6 +10,7 @@
     body { margin:0; font-family: system-ui, sans-serif; background:var(--bg); color:var(--text); }
     header { display:flex; justify-content:space-between; align-items:center; padding:12px 20px; background:var(--panel); border-bottom:1px solid #30363d; }
     .pill { display:inline-block; padding:4px 10px; border-radius:999px; font-size:12px; margin-left:8px; background:#21262d; }
+    #header-status .pill.bad { color:var(--red); border:1px solid var(--red); background:rgba(248,81,73,0.12); font-weight:600; }
     .ok { color:var(--green); } .bad { color:var(--red); } .warn { color:var(--amber); }
     nav { width:220px; background:var(--panel); min-height:calc(100vh - 56px); padding:16px; border-right:1px solid #30363d; }
     nav a { display:block; color:var(--text); text-decoration:none; padding:8px 10px; border-radius:6px; margin-bottom:4px; }
@@ -147,9 +148,9 @@
     <nav>
       <div class="nav-section-label">Network Gateway</div>
       <a href="#dashboard" data-page="dashboard" class="active">Dashboard</a>
-      <a href="#settings" data-page="settings">Settings</a>
       <a href="#devices" data-page="devices">Devices</a>
       <a href="#throughput" data-page="throughput">Throughput</a>
+      <a href="#settings" data-page="settings">Settings</a>
       <hr style="border-color:#30363d;margin:16px 0 8px">
       <div class="nav-section-label">Home Access</div>
       <a href="/home-vpn/">VPN clients</a>
@@ -173,6 +174,7 @@ const HISTORY_MAX_MS = 60 * 60 * 1000;
 const POLL_MS = 5000;
 const PRESENCE_POLL_MS = 30000;
 const USAGE_POLL_MS = 60000;
+const EGRESS_POLL_MS = 300000;
 const LIVE_TAIL_MS = 10000;
 let pollTimer;
 let devicePollTimer;
@@ -196,6 +198,7 @@ let dashboardSessionId = 0;
 let throughputSessionId = 0;
 let dashboardFetchInFlight = false;
 let usageSummaryFetchedAt = 0;
+let egressFetchedAt = 0;
 let throughputFetchInFlight = false;
 let searchDebounceTimer = null;
 const SEARCH_DEBOUNCE_MS = 350;
@@ -374,7 +377,44 @@ async function backfillHistory(range, ip) {
 }
 
 function pill(label, ok, text) {
-  return `<span class="pill ${ok?'ok':'bad'}">${label} ${ok?'●':'○'} ${text}</span>`;
+  return `<span class="pill ${ok?'ok':'bad'}">${label} ${ok?'●':'○'} ${esc(text)}</span>`;
+}
+
+async function refreshHeaderStatus() {
+  try {
+    const status = await api('/status');
+    updateHeaderStatus(status);
+    return status;
+  } catch (_) {
+    return null;
+  }
+}
+
+function updateHeaderStatus(status) {
+  const obscuraOk = !!status.vpn_up;
+  const obscuraText = obscuraOk
+    ? 'Connected'
+    : (status.kill_switch_active ? 'Down · kill switch' : 'Down');
+  document.getElementById('header-status').innerHTML =
+    pill('Gateway', status.gateway_online !== false, 'Online') +
+    pill('Obscura', obscuraOk, obscuraText) +
+    pill('dnsmasq', status.dnsmasq_running, status.dnsmasq_running ? 'Running' : 'Stopped');
+}
+
+function fmtEgressLine(info) {
+  if (!info || !info.ok) {
+    return info?.error ? esc(info.error) : 'Unavailable';
+  }
+  const loc = info.location || [info.city, info.region, info.country].filter(Boolean).join(', ');
+  const ip = info.ip ? esc(info.ip) : '—';
+  return loc ? `${esc(loc)} · ${ip}` : ip;
+}
+
+function fmtEgressMeta(info) {
+  if (!info?.ok) return info?.source ? `Source: ${esc(info.source)}` : '';
+  const parts = [`Verified via ${esc(info.source || 'ipinfo.io')}`];
+  if (info.org) parts.push(esc(info.org));
+  return parts.join(' · ');
 }
 
 function fmtMbps(bps) {
@@ -525,22 +565,22 @@ function setCellBusy(row, selector, busy) {
   }
 }
 
-function updateHeaderStatus(status) {
-  document.getElementById('header-status').innerHTML =
-    pill('Gateway', true, 'Online') +
-    pill('Obscura', status.vpn_up, status.vpn_up ? 'Connected' : 'Down') +
-    pill('dnsmasq', status.dnsmasq_running, status.dnsmasq_running ? 'Running' : 'Stopped');
-}
-
 function renderDashboardShell() {
   document.getElementById('content').innerHTML = `
     <h1>Dashboard</h1>
     <div class="cards">
       <div class="card">
-        <h3>Obscura</h3>
+        <h3>Obscura (VPN Internet)</h3>
         <p id="dash-obscura-status" class="ok">—</p>
+        <p id="dash-vpn-egress">—</p>
+        <p id="dash-vpn-egress-meta" class="card-sub">—</p>
         <p id="dash-obscura-endpoint" class="card-sub">—</p>
         <p id="dash-obscura-handshake" class="card-sub">—</p>
+      </div>
+      <div class="card">
+        <h3>Local Internet</h3>
+        <p id="dash-local-egress">—</p>
+        <p id="dash-local-egress-meta" class="card-sub">—</p>
       </div>
       <div class="card">
         <h3>Inbound VPN</h3>
@@ -575,8 +615,8 @@ function renderDashboardShell() {
       </div>
       <div id="dash-usage-wrap">
         <table class="usage-table">
-          <thead><tr id="dash-usage-head"><th>Path</th><th colspan="5">Loading…</th></tr></thead>
-          <tbody id="dash-usage-body"><tr><td colspan="6" style="text-align:center;color:var(--muted)">—</td></tr></tbody>
+          <thead><tr id="dash-usage-head"><th>Path</th><th colspan="8">Loading…</th></tr></thead>
+          <tbody id="dash-usage-body"><tr><td colspan="9" style="text-align:center;color:var(--muted)">—</td></tr></tbody>
         </table>
         <p id="dash-usage-meta" class="usage-unavail"></p>
       </div>
@@ -587,7 +627,7 @@ function renderDashboardShell() {
   dashboardReady = true;
 }
 
-function refreshDashboardView(status, tp) {
+function refreshDashboardView(status, tp, egress) {
   const obscuraEl = document.getElementById('dash-obscura-status');
   if (!obscuraEl) return false;
   obscuraEl.className = status.vpn_up ? 'ok' : 'bad';
@@ -596,6 +636,22 @@ function refreshDashboardView(status, tp) {
   document.getElementById('dash-obscura-handshake').textContent = status.vpn_up
     ? `Handshake ${fmtHandshake(status.obscura_handshake_seconds)}`
     : 'No recent handshake';
+  if (egress) {
+    const vpnEl = document.getElementById('dash-vpn-egress');
+    const localEl = document.getElementById('dash-local-egress');
+    if (vpnEl) {
+      vpnEl.className = egress.vpn?.ok ? 'ok' : 'bad';
+      vpnEl.textContent = fmtEgressLine(egress.vpn);
+    }
+    const vpnMeta = document.getElementById('dash-vpn-egress-meta');
+    if (vpnMeta) vpnMeta.textContent = fmtEgressMeta(egress.vpn);
+    if (localEl) {
+      localEl.className = egress.local?.ok ? 'ok' : 'bad';
+      localEl.textContent = fmtEgressLine(egress.local);
+    }
+    const localMeta = document.getElementById('dash-local-egress-meta');
+    if (localMeta) localMeta.textContent = fmtEgressMeta(egress.local);
+  }
   document.getElementById('dash-wg1').textContent = `${status.wg1_peer_count} peer(s) online`;
   document.getElementById('dash-dhcp-status').innerHTML = `<span class="${status.dnsmasq_running?'ok':'bad'}">${status.dnsmasq_running?'Running':'Stopped'}</span>`;
   document.getElementById('dash-dhcp-counts').textContent = `${status.active_leases} active lease(s) · ${status.reserved_count} reserved`;
@@ -615,12 +671,17 @@ const USAGE_COL_LABELS = {
   today: 'Today',
   yesterday: 'Yesterday',
   last_7_days: 'Last 7 days',
-  last_8_14_days: 'Last 8–14 days',
+  last_8_14_days: 'Last 8-14 days',
   last_30_days: 'Last 30 days',
-  last_31_60_days: 'Last 31–60 days',
+  last_31_60_days: 'Last 31-60 days',
   this_year: 'This year',
   last_year: 'Last year',
 };
+
+const USAGE_COLUMN_ORDER = [
+  'today', 'yesterday', 'last_7_days', 'last_8_14_days',
+  'last_30_days', 'last_31_60_days', 'this_year', 'last_year',
+];
 
 function fmtUsageGb(value) {
   if (value == null || value !== value) return '—';
@@ -636,13 +697,13 @@ function refreshUsageSummaryView(summary) {
   const meta = document.getElementById('dash-usage-meta');
   if (!head || !body) return false;
 
-  const cols = summary.columns || [];
+  const cols = USAGE_COLUMN_ORDER.filter(c => (summary.columns || []).includes(c));
   head.innerHTML = '<th>Path</th>' + cols.map(c =>
-    `<th>${USAGE_COL_LABELS[c] || c}</th>`).join('');
+    `<th>${USAGE_COL_LABELS[c]}</th>`).join('');
 
   body.innerHTML = (summary.rows || []).map(row => {
-    const cells = cols.map(c => fmtUsageGb(row.values?.[c])).join('</td><td>');
-    return `<tr><td>${row.label}</td><td>${cells}</td></tr>`;
+    const tds = cols.map(c => `<td>${fmtUsageGb(row.values?.[c])}</td>`).join('');
+    return `<tr><td>${esc(row.label)}</td>${tds}</tr>`;
   }).join('');
 
     if (meta) {
@@ -661,8 +722,8 @@ function refreshUsageSummaryError(message) {
   const body = document.getElementById('dash-usage-body');
   const meta = document.getElementById('dash-usage-meta');
   if (!head || !body) return false;
-  head.innerHTML = '<th>Path</th><th colspan="5" style="text-align:center">Unavailable</th>';
-  body.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--muted)">${esc(message || 'Could not load usage totals')}</td></tr>`;
+  head.innerHTML = '<th>Path</th><th colspan="8" style="text-align:center">Unavailable</th>';
+  body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--muted)">${esc(message || 'Could not load usage totals')}</td></tr>`;
   if (meta) {
     meta.textContent = '';
     meta.className = 'usage-unavail warn';
@@ -697,17 +758,26 @@ async function loadDashboard() {
         })
       : Promise.resolve(null);
 
-    const [status, tp, usageResult] = await Promise.all([
+    const needEgress = !egressFetchedAt || (Date.now() - egressFetchedAt >= EGRESS_POLL_MS);
+    const egressP = needEgress
+      ? api('/egress').then(e => {
+          if (session === dashboardSessionId) egressFetchedAt = Date.now();
+          return e;
+        }).catch(() => null)
+      : Promise.resolve(null);
+
+    const [status, tp, usageResult, egressResult] = await Promise.all([
       api('/status'),
       api('/throughput'),
       usageP,
+      egressP,
     ]);
     usageSummary = usageResult;
     if (!isDashboardPage() || session !== dashboardSessionId) return;
 
     pushHistory(tp, null);
     updateHeaderStatus(status);
-    refreshDashboardView(status, tp);
+    refreshDashboardView(status, tp, egressResult);
     if (usageSummary) refreshUsageSummaryView(usageSummary);
     else if (usageError) refreshUsageSummaryError(usageError);
 
@@ -1735,6 +1805,7 @@ async function route() {
   clearInterval(pollTimer);
   clearInterval(presencePollTimer);
   if (!hash.startsWith('device-')) clearInterval(devicePollTimer);
+  await refreshHeaderStatus();
   try {
     if (hash.startsWith('device-')) return await loadDevice(hash.replace('device-',''));
     if (hash === 'settings') return await loadSettings();
@@ -1763,6 +1834,7 @@ async function route() {
       renderDashboardShell();
       devicesPageReady = false;
       usageSummaryFetchedAt = 0;
+      egressFetchedAt = 0;
       await loadDashboard();
       pollTimer = setInterval(() => {
         if (isDashboardPage() && !dashboardFetchInFlight) loadDashboard();
