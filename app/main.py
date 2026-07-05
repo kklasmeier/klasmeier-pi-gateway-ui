@@ -4,7 +4,7 @@ from typing import Annotated
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 from app import config
@@ -61,6 +61,43 @@ def _read_static(name: str) -> HTMLResponse:
     path = os.path.join(STATIC_DIR, name)
     with open(path) as f:
         return HTMLResponse(f.read())
+
+
+def _static_file(name: str, media_type: str) -> FileResponse:
+    path = os.path.join(STATIC_DIR, name)
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="Not found")
+    return FileResponse(path, media_type=media_type)
+
+
+@app.get("/favicon.svg")
+def favicon_svg():
+    return _static_file("favicon.svg", "image/svg+xml")
+
+
+@app.get("/favicon.ico")
+def favicon_ico():
+    return _static_file("icon-192.png", "image/png")
+
+
+@app.get("/apple-touch-icon.png")
+def apple_touch_icon():
+    return _static_file("apple-touch-icon.png", "image/png")
+
+
+@app.get("/icon-192.png")
+def icon_192():
+    return _static_file("icon-192.png", "image/png")
+
+
+@app.get("/icon-512.png")
+def icon_512():
+    return _static_file("icon-512.png", "image/png")
+
+
+@app.get("/manifest.webmanifest")
+def web_manifest():
+    return _static_file("manifest.webmanifest", "application/manifest+json")
 
 
 @app.get("/", response_class=HTMLResponse)
