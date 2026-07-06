@@ -135,6 +135,22 @@
     .usage-table-mobile { display:none; }
     .usage-table-mobile th:last-child, .usage-table-mobile td:last-child { font-weight:600; }
     .usage-unavail { color:var(--muted); font-size:13px; margin:8px 0 0; }
+    .dash-vpn-clients { list-style:none; margin:8px 0 0; padding:0; font-size:13px; }
+    .dash-vpn-clients li { display:flex; justify-content:space-between; gap:10px; padding:4px 0; border-top:1px solid #30363d; }
+    .dash-vpn-clients li:first-child { border-top:none; padding-top:0; }
+    .dash-vpn-clients .name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+    .dash-vpn-clients .state { flex-shrink:0; font-size:12px; white-space:nowrap; }
+    .renew-hint { background:rgba(210,153,34,0.12); border:1px solid rgba(210,153,34,0.45); color:var(--amber); border-radius:8px; padding:10px 12px; font-size:13px; margin:0 0 16px; }
+    .toggle.renew-pending { box-shadow:0 0 0 1px var(--amber); }
+    .backup-lines { margin:0; padding:0; list-style:none; font-size:13px; }
+    .backup-lines li { padding:3px 0; }
+    .backup-lines .bad { color:var(--red); }
+    .backup-lines .ok { color:var(--green); }
+    .service-diag { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:12px; margin-top:10px; font-size:12px; }
+    .service-diag pre { margin:8px 0 0; max-height:160px; overflow:auto; white-space:pre-wrap; color:var(--muted); background:#0d1117; border:1px solid #30363d; border-radius:6px; padding:8px; }
+    .service-diag code { display:block; margin-top:8px; color:var(--muted); white-space:pre-wrap; }
+    #header-diagnostics { display:none; padding:10px 20px; background:#1c1612; border-bottom:1px solid rgba(210,153,34,0.45); }
+    #header-diagnostics.visible { display:block; }
     @media (max-width:800px) {
       .layout { flex-direction:column; }
       nav { width:auto; min-height:auto; }
@@ -159,6 +175,7 @@
     <strong class="header-title"><span class="logo-dot">◉ </span>Klasmeier Network Gateway</strong>
     <div id="header-status"></div>
   </header>
+  <div id="header-diagnostics"></div>
   <div class="layout">
     <nav>
       <div class="nav-section-label">Network Gateway</div>
@@ -414,6 +431,78 @@ function updateHeaderStatus(status) {
     pill('Gateway', status.gateway_online !== false, 'Online') +
     pill('Obscura', obscuraOk, obscuraText) +
     pill('dnsmasq', status.dnsmasq_running, status.dnsmasq_running ? 'Running' : 'Stopped');
+  if (status.dnsmasq_running) {
+    hideHeaderDiagnostics();
+  } else {
+    loadServiceDiagnostics('dnsmasq', 'header-diagnostics', 'dnsmasq is stopped — LAN DHCP/DNS may fail');
+  }
+}
+
+function hideHeaderDiagnostics() {
+  const el = document.getElementById('header-diagnostics');
+  if (!el) return;
+  el.classList.remove('visible');
+  el.innerHTML = '';
+}
+
+function fmtBackupLine(target) {
+  const label = target.name === 'usage_rollups' ? 'Usage rollups' : 'Registry';
+  if (target.ok === true) {
+    const when = target.last_success_at ? fmtRelative(target.last_success_at) : 'recently';
+    return `<li><span class="ok">${label}</span> · OK · ${esc(when)}</li>`;
+  }
+  if (target.ok === false) {
+    const err = target.error ? ` · ${esc(target.error)}` : '';
+    const when = target.last_attempt_at ? fmtRelative(target.last_attempt_at) : 'unknown';
+    return `<li><span class="bad">${label}</span> · Failed · ${esc(when)}${err}</li>`;
+  }
+  return `<li class="card-sub">${label} · no backup recorded yet</li>`;
+}
+
+function refreshBackupView(backups) {
+  const el = document.getElementById('dash-backups');
+  if (!el || !backups) return;
+  const lines = [fmtBackupLine(backups.registry), fmtBackupLine(backups.usage_rollups)];
+  el.innerHTML = lines.join('') + `<li class="card-sub">Scheduled every ${backups.schedule_hours || 24}h</li>`;
+}
+
+function renderServiceDiagnosticsHtml(diag, title) {
+  const logs = (diag.log_tail || []).slice(-12).map(l => esc(l)).join('\n') || 'No recent log lines.';
+  const cmds = (diag.suggested_actions || []).map(c => esc(c)).join('\n');
+  return `<div class="service-diag">
+    <strong>${esc(title)}</strong>
+    <p class="card-sub" style="margin:4px 0 0">${esc(diag.state || 'unknown')}${diag.since ? ` · since ${esc(diag.since)}` : ''}</p>
+    <pre>${logs}</pre>
+    <code>${cmds}</code>
+  </div>`;
+}
+
+async function loadServiceDiagnostics(unit, targetId, title) {
+  const el = document.getElementById(targetId);
+  if (!el) return;
+  const heading = title || `${unit} diagnostics`;
+  try {
+    const diag = await api('/services/' + encodeURIComponent(unit) + '/diagnostics');
+    el.innerHTML = renderServiceDiagnosticsHtml(diag, heading);
+    el.classList.add('visible');
+  } catch (e) {
+    el.innerHTML = `<div class="service-diag"><p class="bad">${esc(e.message || 'Could not load diagnostics')}</p></div>`;
+    el.classList.add('visible');
+  }
+}
+
+function dnsRenewHintHtml(d, settings) {
+  if (!d.dns_renew_pending) return '';
+  const nd = settings?.network_defaults || settings || {};
+  const hours = d.reserved ? (nd.dhcp_reserved_lease_hours || 24) : (nd.dhcp_dynamic_lease_hours || 4);
+  const link = (d.link_type || '').toLowerCase();
+  let how = 'Renew the DHCP lease on this device (toggle Wi‑Fi off/on on phones, or release/renew on computers).';
+  if (link.includes('5') || link.includes('2.4') || link.includes('wifi')) {
+    how = 'Toggle Wi‑Fi off and on on this device.';
+  } else if (link.includes('wired')) {
+    how = 'Unplug and replug Ethernet, or run a DHCP renew on the device.';
+  }
+  return `<div class="renew-hint">DNS settings changed — renew DHCP to apply Pi-hole. ${how} Otherwise updates within about ${hours}h when the lease renews.</div>`;
 }
 
 function fmtEgressLine(info) {
@@ -600,11 +689,17 @@ function renderDashboardShell() {
       <div class="card">
         <h3>Inbound VPN</h3>
         <p id="dash-wg1">—</p>
+        <ul id="dash-wg1-clients" class="dash-vpn-clients"></ul>
       </div>
       <div class="card">
         <h3>DHCP</h3>
         <p id="dash-dhcp-status">—</p>
         <p id="dash-dhcp-counts" class="card-sub">—</p>
+        <div id="dash-dnsmasq-diag"></div>
+      </div>
+      <div class="card">
+        <h3>Backups</h3>
+        <ul id="dash-backups" class="backup-lines"><li class="card-sub">Loading…</li></ul>
       </div>
       <div class="card">
         <h3>Uptime</h3>
@@ -671,9 +766,13 @@ function refreshDashboardView(status, tp, egress) {
     const localMeta = document.getElementById('dash-local-egress-meta');
     if (localMeta) localMeta.textContent = fmtEgressMeta(egress.local);
   }
-  document.getElementById('dash-wg1').textContent = `${status.wg1_peer_count} peer(s) online`;
   document.getElementById('dash-dhcp-status').innerHTML = `<span class="${status.dnsmasq_running?'ok':'bad'}">${status.dnsmasq_running?'Running':'Stopped'}</span>`;
   document.getElementById('dash-dhcp-counts').textContent = `${status.active_leases} active lease(s) · ${status.reserved_count} reserved`;
+  const diagEl = document.getElementById('dash-dnsmasq-diag');
+  if (diagEl) {
+    if (status.dnsmasq_running) diagEl.innerHTML = '';
+    else loadServiceDiagnostics('dnsmasq', 'dash-dnsmasq-diag', 'dnsmasq is stopped — recovery steps');
+  }
   document.getElementById('dash-uptime').textContent = `${(status.uptime_seconds/3600).toFixed(1)} hours`;
   document.getElementById('dash-tp-now').textContent = `↓ ${fmtMbps(tp.eth0_rx_bps)} Mbps in · ↑ ${fmtMbps(tp.eth0_tx_bps)} Mbps out`;
   document.getElementById('dash-policy').textContent =
@@ -683,6 +782,43 @@ function refreshDashboardView(status, tp, egress) {
     { field: 'eth0_tx', color: '#3fb950' },
     { field: 'wg0_rx', color: '#d29922' },
   ], rangeMs('5m'));
+  return true;
+}
+
+function fmtInboundVpnState(client) {
+  if (!client.enabled) return '<span class="status-off">Disabled</span>';
+  if (client.connected) return '<span class="status-on">Connected</span>';
+  if (client.status === 'idle') {
+    const ago = fmtHandshake(client.last_handshake_seconds);
+    return `<span class="warn">Idle · ${ago === '—' ? 'recent' : ago}</span>`;
+  }
+  return '<span class="status-off">Not connected</span>';
+}
+
+function refreshInboundVpnView(clients) {
+  const summaryEl = document.getElementById('dash-wg1');
+  const listEl = document.getElementById('dash-wg1-clients');
+  if (!summaryEl || !listEl) return false;
+
+  const rows = clients || [];
+  const enabled = rows.filter(c => c.enabled);
+  const connected = enabled.filter(c => c.connected);
+
+  if (!rows.length) {
+    summaryEl.textContent = 'No clients configured';
+    listEl.innerHTML = '';
+    return true;
+  }
+
+  summaryEl.textContent = `${enabled.length} enabled · ${connected.length} connected`;
+  const sorted = [...rows].sort((a, b) => {
+    const rank = c => (c.connected ? 0 : c.enabled ? 1 : 2);
+    const diff = rank(a) - rank(b);
+    return diff !== 0 ? diff : a.name.localeCompare(b.name);
+  });
+  listEl.innerHTML = sorted.map(c =>
+    `<li><span class="name">${esc(c.name)}</span><span class="state">${fmtInboundVpnState(c)}</span></li>`
+  ).join('');
   return true;
 }
 
@@ -804,11 +940,13 @@ async function loadDashboard() {
         }).catch(() => null)
       : Promise.resolve(null);
 
-    const [status, tp, usageResult, egressResult] = await Promise.all([
+    const [status, tp, usageResult, egressResult, vpnClients, backupResult] = await Promise.all([
       api('/status'),
       api('/throughput'),
       usageP,
       egressP,
+      api('/vpn-clients').catch(() => null),
+      api('/backups').catch(() => null),
     ]);
     usageSummary = usageResult;
     if (!isDashboardPage() || session !== dashboardSessionId) return;
@@ -816,6 +954,8 @@ async function loadDashboard() {
     pushHistory(tp, null);
     updateHeaderStatus(status);
     refreshDashboardView(status, tp, egressResult);
+    if (vpnClients) refreshInboundVpnView(vpnClients);
+    if (backupResult) refreshBackupView(backupResult);
     if (usageSummary) refreshUsageSummaryView(usageSummary);
     else if (usageError) refreshUsageSummaryError(usageError);
 
@@ -1087,17 +1227,19 @@ function piholeToggleHtml(d) {
   const gwLocked = d.ip === GATEWAY_IP;
   const on = !!d.effective_use_pihole;
   const canToggle = d.reserved && !gwLocked;
+  const pendingCls = d.dns_renew_pending ? ' renew-pending' : '';
+  const pendingTitle = d.dns_renew_pending ? ' — renew DHCP to apply DNS' : '';
   if (gwLocked) {
-    return `<span class="toggle on disabled" title="Pi-hole DNS active (gateway)">●</span>`;
+    return `<span class="toggle on disabled${pendingCls}" title="Pi-hole DNS active (gateway)">●</span>`;
   }
   if (!canToggle) {
     const title = on ? 'Pi-hole DNS active' : 'Public DNS (reserve to enable Pi-hole option)';
-    return `<span class="toggle ${on ? 'on' : 'off'} disabled" title="${title}">${on ? '●' : '○'}</span>`;
+    return `<span class="toggle ${on ? 'on' : 'off'} disabled${pendingCls}" title="${title}${pendingTitle}">${on ? '●' : '○'}</span>`;
   }
   const cls = on ? 'on' : 'off';
   const sym = on ? '●' : '○';
   const title = on ? 'Pi-hole DNS active — click for public DNS' : 'Public DNS — click for Pi-hole';
-  return `<span class="toggle ${cls}" onclick="toggleGridPihole('${d.ip}', ${!on}, event)" title="${title}">${sym}</span>`;
+  return `<span class="toggle ${cls}${pendingCls}" onclick="toggleGridPihole('${d.ip}', ${!on}, event)" title="${title}${pendingTitle}">${sym}</span>`;
 }
 
 async function toggleGridVpn(ip, routed, event) {
@@ -1126,7 +1268,7 @@ async function toggleGridPihole(ip, usePihole, event) {
   document.getElementById('error').textContent = '';
   try {
     await api('/devices/' + ip, { method:'PUT', body: JSON.stringify({ use_pihole: usePihole }) });
-    showStatus(`Pi-hole DNS ${usePihole ? 'enabled' : 'disabled'} — applied`);
+    showStatus(`Pi-hole DNS ${usePihole ? 'enabled' : 'disabled'} — renew DHCP on device to apply DNS`);
     await loadDevices({ force: true });
   } catch (e) {
     setCellBusy(row, '.pihole-cell', false);
@@ -1203,6 +1345,7 @@ function deviceRowState(d) {
     use_pihole: d.use_pihole,
     effective_vpn_routed: !!d.effective_vpn_routed,
     effective_use_pihole: !!d.effective_use_pihole,
+    dns_renew_pending: !!d.dns_renew_pending,
     reserved: d.reserved,
     first_seen_at: d.first_seen_at,
     last_renewed_at: d.last_renewed_at,
@@ -1503,6 +1646,7 @@ function renderDeviceDetailContent(d, tp, settings, ip) {
       <h1>${esc(d.hostname)} ${d.recently_joined || d.recently_registered ? `<span class="device-badges">${d.recently_joined && d.network_joined_at ? `<span class="activity-badge activity-badge-joined" title="Joined network ${fmtDate(d.network_joined_at)} (within the last 60 minutes)">Joined</span>` : ''}${d.recently_registered && d.registered_at ? `<span class="activity-badge activity-badge-new" title="Registered ${fmtDate(d.registered_at)} (within the last 60 minutes)">New</span>` : ''}</span>` : ''}<small>${esc(d.ip)}</small></h1>
       <div class="device-reservation">${reservationBlock}</div>
     </div>
+    ${dnsRenewHintHtml(d, settings)}
     <div class="cards">
       <div class="card">
         <div class="section-head">
@@ -1574,7 +1718,14 @@ function renderDeviceDetailContent(d, tp, settings, ip) {
   startDeviceDetailPoll(ip);
 }
 
-async function loadDevice(ip) {
+function mergeDeviceIntoCache(device) {
+  if (!device?.ip) return;
+  const idx = devicesCache.findIndex(d => d.ip === device.ip);
+  if (idx >= 0) devicesCache[idx] = { ...devicesCache[idx], ...device };
+  else devicesCache.push(device);
+}
+
+async function loadDevice(ip, { force = false } = {}) {
   const session = ++deviceDetailSessionId;
   clearInterval(devicePollTimer);
   dashboardReady = false;
@@ -1582,7 +1733,7 @@ async function loadDevice(ip) {
   devicesPageReady = false;
   renderDeviceDetailShell(ip);
 
-  const cached = devicesCache.find(d => d.ip === ip);
+  const cached = !force ? devicesCache.find(d => d.ip === ip) : null;
   sampleHistory.clear();
   try {
     const backfillP = backfillHistory('15m', ip);
@@ -1629,7 +1780,7 @@ async function saveDevice(ip, event) {
   };
   try {
     await api('/devices/' + ip, { method:'PUT', body: JSON.stringify(body) });
-    showStatus(`Saved ${hostname} — registry and DHCP updated`);
+    showStatus(`Saved ${hostname} — renew DHCP on this device if you changed DNS`);
     sessionStorage.setItem('highlightIp', ip);
     location.hash = 'devices';
   } catch (e) {
@@ -1645,7 +1796,7 @@ async function reserveDevice(ip, event) {
   await paintUi();
   try {
     const d = await api('/devices/' + ip);
-    await api('/devices', {
+    const reserved = await api('/devices', {
       method: 'POST',
       body: JSON.stringify({
         mac: d.mac,
@@ -1656,8 +1807,9 @@ async function reserveDevice(ip, event) {
         notes: d.notes || '',
       }),
     });
-    showStatus('IP reserved — DHCP and routing rules applied');
-    await loadDevice(ip);
+    mergeDeviceIntoCache(reserved);
+    showStatus('IP reserved — renew DHCP on this device to apply DNS and routing');
+    await loadDevice(ip, { force: true });
   } catch (e) {
     setBtnBusy(btn, false);
     document.getElementById('error').textContent = e.message;
