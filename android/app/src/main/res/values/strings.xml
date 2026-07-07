@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Internet Gateway Path</string>
+    <string name="app_version_label">Version %1$s (%2$d)</string>
     <string name="path_obscura">Obscura Internet</string>
     <string name="path_home">Home Internet</string>
     <string name="path_phone">Phone Internet</string>
