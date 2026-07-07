@@ -54,6 +54,8 @@ APK output:
 android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
+**Install on other family phones:** see **[INSTALL-FAMILY.md](INSTALL-FAMILY.md)**.
+
 ---
 
 ## 4. Install on your phone
