@@ -4,6 +4,8 @@ Standalone management UI for the home VPN gateway. Runs on **PiSensors** (192.16
 
 **Browser URL:** http://192.168.1.26:8000/gateway/
 
+**Android app:** `android/` — [Internet Gateway Path](android/README.md) (family phone companion). **PC build guide:** [android/BUILD-PC.md](android/BUILD-PC.md).
+
 ## Architecture
 
 | Component | Host | Port |

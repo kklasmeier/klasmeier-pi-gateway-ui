@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Internet Gateway Path</string>
+    <string name="path_obscura">Obscura Internet</string>
+    <string name="path_home">Home Internet</string>
+    <string name="path_phone">Phone Internet</string>
+    <string name="path_unknown">Unable to verify</string>
+    <string name="refresh">Refresh now</string>
+    <string name="last_checked">Last checked</string>
+    <string name="recent_changes">Recent changes</string>
+    <string name="setup_title">Setup</string>
+    <string name="setup_scan_qr">Scan setup QR</string>
+    <string name="setup_manual">Enter manually</string>
+    <string name="connection_detail">Connection</string>
+</resources>

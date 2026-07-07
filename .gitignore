@@ -3,3 +3,12 @@ venv/
 __pycache__/
 *.pyc
 .Python
+
+# Android (Internet Gateway Path)
+android/.gradle/
+android/**/build/
+android/local.properties
+android/.idea/
+android/*.iml
+android/app/*.iml
+
