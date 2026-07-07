@@ -16,9 +16,9 @@ class PathCheckRepository(
     private val ipInfoClient: IpInfoClient = IpInfoClient(),
     private val gatewayClient: GatewayClient = GatewayClient(),
     private val classifier: PathClassifier = PathClassifier(),
-    database: AppDatabase? = null,
+    db: AppDatabase? = null,
 ) {
-    private val database = database ?: AppDatabase.get(context)
+    private val database = db ?: AppDatabase.get(context)
     private val transitionDao = database.transitionDao()
     private var lastPath: InternetPath? = null
 
