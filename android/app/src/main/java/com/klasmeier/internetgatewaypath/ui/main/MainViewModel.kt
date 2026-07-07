@@ -7,6 +7,7 @@ import com.klasmeier.internetgatewaypath.data.InternetPath
 import com.klasmeier.internetgatewaypath.data.PathCheckRepository
 import com.klasmeier.internetgatewaypath.data.PathCheckResult
 import com.klasmeier.internetgatewaypath.data.db.TransitionEntity
+import com.klasmeier.internetgatewaypath.monitor.PathMonitor
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -34,7 +35,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(loading = true, error = null)
             try {
-                val result = repository.runCheck()
+                val result = PathMonitor.runCheckAndNotify(getApplication())
+                    ?: PathCheckResult(
+                        path = InternetPath.CHECK_FAILED,
+                        publicIp = null,
+                        location = null,
+                        latitude = null,
+                        longitude = null,
+                        connectionDetail = emptyList(),
+                        expectedPath = null,
+                        policyMismatch = false,
+                        checkedAtEpochMs = System.currentTimeMillis(),
+                        errorMessage = "Check failed",
+                    )
                 _uiState.value = _uiState.value.copy(
                     loading = false,
                     previous = _uiState.value.current?.takeIf { result.path != InternetPath.CHECK_FAILED },

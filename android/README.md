@@ -21,11 +21,14 @@ APK: `app/build/outputs/apk/debug/app-debug.apk`
 
 | Phase | Status |
 |-------|--------|
-| 1 — Core check, history, manual setup | **Started** |
-| 2 — Widget + change alerts | Not started |
-| 3 — Admin QR page on PiSensors | Not started (use manual JSON until then) |
+| 1 — Core check, history, QR setup, settings, recalibrate | **Done** (map + custom icons deferred) |
+| 2 — Change alerts (WorkManager, NetworkCallback, quiet hours) | **Done** |
+| 2b — Glance home-screen widgets | Not started |
+| 3 — Admin QR page on PiSensors | **Done** |
+
+**Deferred to later:** OSMDroid map, custom friendly icons, Glance widgets, full history screen.
 
 ## Related
 
 - **klasmeier-pi-gateway** — gateway API (`GET /api/client-path`, `/api/egress`)
-- **This repo** — PiSensors web UI; Phase 3 QR generator will live here
+- **This repo** — PiSensors web UI; mobile setup QR lives under **Mobile app** in admin UI
