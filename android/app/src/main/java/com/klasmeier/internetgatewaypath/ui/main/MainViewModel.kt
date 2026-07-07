@@ -54,6 +54,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun refreshOnForeground() {
+        val lastChecked = _uiState.value.current?.checkedAtEpochMs ?: 0L
+        if (System.currentTimeMillis() - lastChecked > FOREGROUND_REFRESH_MS) {
+            refresh()
+        }
+    }
+
+    companion object {
+        private const val FOREGROUND_REFRESH_MS = 30_000L
+    }
+
     private fun loadHistory() {
         viewModelScope.launch {
             val transitions = repository.recentTransitions(limit = 10)

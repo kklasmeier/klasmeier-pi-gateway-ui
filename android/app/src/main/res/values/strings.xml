@@ -35,4 +35,10 @@
     <string name="settings_clear_confirm_action">Clear</string>
     <string name="notification_channel_name">Path changes</string>
     <string name="notification_channel_desc">Alerts when your internet path changes</string>
+    <string name="widget_description">Current internet path</string>
+    <string name="widget_setup_needed">Tap to set up</string>
+    <string name="widget_last_checked">Last checked %1$s</string>
+    <string name="widget_not_checked">Not checked yet</string>
+    <string name="policy_mismatch_warning">Gateway expected %1$s — path may differ from policy</string>
+    <string name="transition_exit_ip">Exit IP %1$s</string>
 </resources>

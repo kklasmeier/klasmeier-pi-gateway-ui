@@ -11,6 +11,7 @@ import androidx.core.app.NotificationManagerCompat
 import com.klasmeier.internetgatewaypath.MainActivity
 import com.klasmeier.internetgatewaypath.R
 import com.klasmeier.internetgatewaypath.data.InternetPath
+import com.klasmeier.internetgatewaypath.ui.PathVisuals
 import java.text.DateFormat
 import java.util.Date
 
@@ -28,7 +29,7 @@ class PathNotificationHelper(private val context: Context) {
         )
         val time = DateFormat.getTimeInstance(DateFormat.SHORT).format(Date())
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_menu_compass)
+            .setSmallIcon(PathVisuals.notificationIconRes(current))
             .setContentTitle("Now using ${label(current)}")
             .setContentText("Was: ${label(previous)} · $time")
             .setStyle(
@@ -43,12 +44,7 @@ class PathNotificationHelper(private val context: Context) {
         NotificationManagerCompat.from(context).notify(NOTIFICATION_ID, notification)
     }
 
-    private fun label(path: InternetPath): String = when (path) {
-        InternetPath.OBSCURA -> context.getString(R.string.path_obscura)
-        InternetPath.HOME -> context.getString(R.string.path_home)
-        InternetPath.PHONE -> context.getString(R.string.path_phone)
-        InternetPath.UNKNOWN, InternetPath.CHECK_FAILED -> context.getString(R.string.path_unknown)
-    }
+    private fun label(path: InternetPath): String = PathVisuals.label(context, path)
 
     private fun ensureChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return

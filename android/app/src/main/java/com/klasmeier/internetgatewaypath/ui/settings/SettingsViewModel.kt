@@ -8,6 +8,7 @@ import com.klasmeier.internetgatewaypath.data.PathCheckRepository
 import com.klasmeier.internetgatewaypath.data.ReferenceIps
 import com.klasmeier.internetgatewaypath.data.SettingsRepository
 import com.klasmeier.internetgatewaypath.monitor.PathMonitor
+import com.klasmeier.internetgatewaypath.widget.WidgetUpdater
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -92,6 +93,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             try {
                 PathMonitor.stop(getApplication())
                 settingsRepository.clearAll()
+                WidgetUpdater.refreshAll(getApplication())
                 onCleared()
             } catch (exc: Exception) {
                 _uiState.value = _uiState.value.copy(

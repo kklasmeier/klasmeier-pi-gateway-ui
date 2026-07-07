@@ -4,6 +4,8 @@ Family phone app that shows whether traffic is using **Obscura Internet**, **Hom
 
 **Build on PC:** see **[BUILD-PC.md](BUILD-PC.md)** — full steps for Android Studio, USB install, and first-run setup.
 
+**Family install:** see **[INSTALL-FAMILY.md](INSTALL-FAMILY.md)** — sideload APK to other phones without Android Studio.
+
 **Spec:** `android_app_build_specifications.md` in **klasmeier-pi-gateway** → `project-specifications/`.
 
 ## Quick start (PC)
@@ -21,12 +23,12 @@ APK: `app/build/outputs/apk/debug/app-debug.apk`
 
 | Phase | Status |
 |-------|--------|
-| 1 — Core check, history, QR setup, settings, recalibrate, map | **Done** (custom icons deferred) |
+| 1 — Core check, history, QR setup, settings, recalibrate, map, friendly icons | **Done** |
 | 2 — Change alerts (WorkManager, NetworkCallback, quiet hours) | **Done** |
-| 2b — Glance home-screen widgets | Not started |
-| 3 — Admin QR page on PiSensors | **Done** |
+| 2b — Glance home-screen widget | **Done** |
+| 3 — Admin QR page on PiSensors + family install doc | **Done** |
 
-**Deferred to later:** custom friendly icons, Glance widgets, full history screen.
+**Deferred to later:** full history screen, split-tunnel / per-device tokens / iOS.
 
 ## Related
 

@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.klasmeier.internetgatewaypath.data.db.AppDatabase
@@ -38,6 +39,8 @@ class SettingsRepository(private val context: Context) {
         val QUIET_HOURS_ENABLED = booleanPreferencesKey("quiet_hours_enabled")
         val QUIET_START_MINUTES = intPreferencesKey("quiet_start_minutes")
         val QUIET_END_MINUTES = intPreferencesKey("quiet_end_minutes")
+        val WIDGET_PATH = stringPreferencesKey("widget_path")
+        val WIDGET_CHECKED_AT = longPreferencesKey("widget_checked_at")
     }
 
     val isConfigured: Flow<Boolean> = context.dataStore.data.map { prefs ->
@@ -118,6 +121,22 @@ class SettingsRepository(private val context: Context) {
         AppDatabase.get(context).transitionDao().deleteAll()
     }
 
+    suspend fun saveWidgetState(pathName: String, checkedAtEpochMs: Long) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.WIDGET_PATH] = pathName
+            prefs[Keys.WIDGET_CHECKED_AT] = checkedAtEpochMs
+        }
+    }
+
+    suspend fun widgetSnapshot(): WidgetSnapshot {
+        val prefs = context.dataStore.data.first()
+        return WidgetSnapshot(
+            configured = !prefs[Keys.GATEWAY_URL].isNullOrBlank() && !prefs[Keys.TOKEN].isNullOrBlank(),
+            pathName = prefs[Keys.WIDGET_PATH],
+            checkedAtEpochMs = prefs[Keys.WIDGET_CHECKED_AT],
+        )
+    }
+
     private fun notificationPrefsFrom(prefs: Preferences): NotificationPrefs {
         return NotificationPrefs(
             notificationsEnabled = prefs[Keys.NOTIFICATIONS_ENABLED] ?: true,
@@ -160,3 +179,9 @@ data class SettingsSnapshot(
     val configured: Boolean
         get() = !gatewayUrl.isNullOrBlank() && !token.isNullOrBlank()
 }
+
+data class WidgetSnapshot(
+    val configured: Boolean = false,
+    val pathName: String? = null,
+    val checkedAtEpochMs: Long? = null,
+)

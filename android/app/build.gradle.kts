@@ -12,8 +12,8 @@ android {
         applicationId = "com.klasmeier.internetgatewaypath"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.2.0"
+        versionCode = 7
+        versionName = "0.3.0"
     }
 
     buildTypes {
@@ -74,6 +74,8 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     implementation("org.osmdroid:osmdroid-android:6.1.18")
+    implementation("androidx.glance:glance-appwidget:1.1.0")
+    implementation("androidx.glance:glance-material3:1.1.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")

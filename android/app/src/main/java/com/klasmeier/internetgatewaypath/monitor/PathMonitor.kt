@@ -7,6 +7,7 @@ import com.klasmeier.internetgatewaypath.data.PathCheckResult
 import com.klasmeier.internetgatewaypath.data.SettingsRepository
 import com.klasmeier.internetgatewaypath.notification.PathNotificationHelper
 import com.klasmeier.internetgatewaypath.util.QuietHours
+import com.klasmeier.internetgatewaypath.widget.WidgetUpdater
 
 object PathMonitor {
     @Volatile
@@ -40,6 +41,7 @@ object PathMonitor {
 
         val repository = PathCheckRepository(appContext, settingsRepository = settingsRepository)
         val result = repository.runCheck()
+        WidgetUpdater.onCheckComplete(appContext, result)
         val path = result.path
         if (path == InternetPath.CHECK_FAILED || path == InternetPath.UNKNOWN) {
             return result

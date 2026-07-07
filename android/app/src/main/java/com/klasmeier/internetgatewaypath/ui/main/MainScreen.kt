@@ -2,15 +2,14 @@ package com.klasmeier.internetgatewaypath.ui.main
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Cloud
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
@@ -21,15 +20,18 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -38,6 +40,7 @@ import com.klasmeier.internetgatewaypath.R
 import com.klasmeier.internetgatewaypath.data.InternetPath
 import com.klasmeier.internetgatewaypath.data.PathCheckResult
 import com.klasmeier.internetgatewaypath.data.db.TransitionEntity
+import com.klasmeier.internetgatewaypath.ui.PathVisuals
 import java.text.DateFormat
 import java.util.Date
 
@@ -85,43 +88,50 @@ fun MainScreen(
             )
         },
     ) { padding ->
-        Column(
+        PullToRefreshBox(
+            isRefreshing = state.loading,
+            onRefresh = viewModel::refresh,
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+                .padding(padding),
         ) {
-            if (state.loading && state.current == null) {
-                CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
-            }
-
-            val display = state.current ?: state.previous
-            if (display != null) {
-                PathCard(result = display, dimmed = state.current?.path == InternetPath.CHECK_FAILED)
-            }
-
-            Button(
-                onClick = viewModel::refresh,
-                enabled = !state.loading,
-                modifier = Modifier.fillMaxWidth(),
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                Icon(Icons.Default.Refresh, contentDescription = null)
-                Text(stringResource(R.string.refresh), modifier = Modifier.padding(start = 8.dp))
-            }
+                if (state.loading && state.current == null) {
+                    CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
+                }
 
-            state.error?.let {
-                Text(it, color = MaterialTheme.colorScheme.error)
-            }
+                val display = state.current ?: state.previous
+                if (display != null) {
+                    PathCard(result = display, dimmed = state.current?.path == InternetPath.CHECK_FAILED)
+                }
 
-            if (state.transitions.isNotEmpty()) {
-                Text(
-                    text = stringResource(R.string.recent_changes),
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                state.transitions.forEach { transition ->
-                    TransitionRow(transition)
+                Button(
+                    onClick = viewModel::refresh,
+                    enabled = !state.loading,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Default.Refresh, contentDescription = null)
+                    Text(stringResource(R.string.refresh), modifier = Modifier.padding(start = 8.dp))
+                }
+
+                state.error?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error)
+                }
+
+                if (state.transitions.isNotEmpty()) {
+                    Text(
+                        text = stringResource(R.string.recent_changes),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    state.transitions.forEach { transition ->
+                        TransitionRow(transition)
+                    }
                 }
             }
         }
@@ -130,6 +140,7 @@ fun MainScreen(
 
 @Composable
 private fun PathCard(result: PathCheckResult, dimmed: Boolean) {
+    val context = LocalContext.current
     val alpha = if (dimmed) 0.55f else 1f
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -137,17 +148,46 @@ private fun PathCard(result: PathCheckResult, dimmed: Boolean) {
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Icon(
-            imageVector = pathIcon(result.path),
+            painter = painterResource(PathVisuals.iconRes(result.path)),
             contentDescription = null,
-            modifier = Modifier.padding(top = 8.dp),
-            tint = MaterialTheme.colorScheme.primary.copy(alpha = alpha),
+            modifier = Modifier
+                .padding(top = 8.dp)
+                .size(72.dp),
+            tint = androidx.compose.ui.graphics.Color.Unspecified,
         )
         Text(
-            text = pathLabel(result.path),
+            text = PathVisuals.label(context, result.path),
             style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onBackground.copy(alpha = alpha),
         )
+        if (result.policyMismatch) {
+            Surface(
+                color = MaterialTheme.colorScheme.errorContainer,
+                shape = MaterialTheme.shapes.medium,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Default.Warning,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                    Text(
+                        text = stringResource(
+                            R.string.policy_mismatch_warning,
+                            result.expectedPath ?: "unknown",
+                        ),
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
+        }
         result.publicIp?.let {
             Text("Exit IP  $it", color = MaterialTheme.colorScheme.onBackground.copy(alpha = alpha))
         }
@@ -182,33 +222,22 @@ private fun PathCard(result: PathCheckResult, dimmed: Boolean) {
 
 @Composable
 private fun TransitionRow(transition: TransitionEntity) {
-    Text(
-        text = "${formatTime(transition.occurredAtEpochMs)}  " +
-            "${pathLabel(transition.fromPath)} → ${pathLabel(transition.toPath)}",
-        style = MaterialTheme.typography.bodyMedium,
-    )
-}
-
-@Composable
-private fun pathLabel(path: InternetPath): String = when (path) {
-    InternetPath.OBSCURA -> stringResource(R.string.path_obscura)
-    InternetPath.HOME -> stringResource(R.string.path_home)
-    InternetPath.PHONE -> stringResource(R.string.path_phone)
-    InternetPath.UNKNOWN, InternetPath.CHECK_FAILED -> stringResource(R.string.path_unknown)
-}
-
-private fun pathLabel(name: String): String = when (name) {
-    InternetPath.OBSCURA.name -> "Obscura Internet"
-    InternetPath.HOME.name -> "Home Internet"
-    InternetPath.PHONE.name -> "Phone Internet"
-    else -> "Unknown"
-}
-
-private fun pathIcon(path: InternetPath): ImageVector = when (path) {
-    InternetPath.OBSCURA -> Icons.Default.Cloud
-    InternetPath.HOME -> Icons.Default.Home
-    InternetPath.PHONE -> Icons.Default.PhoneAndroid
-    InternetPath.UNKNOWN, InternetPath.CHECK_FAILED -> Icons.Default.Warning
+    val context = LocalContext.current
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = "${formatTime(transition.occurredAtEpochMs)}  " +
+                "${PathVisuals.label(context, transition.fromPath)} → " +
+                PathVisuals.label(context, transition.toPath),
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        transition.publicIp?.let { ip ->
+            Text(
+                text = stringResource(R.string.transition_exit_ip, ip),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
 }
 
 private fun formatTime(epochMs: Long): String {
