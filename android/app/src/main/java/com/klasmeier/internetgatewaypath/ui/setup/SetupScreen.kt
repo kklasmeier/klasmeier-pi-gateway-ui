@@ -93,6 +93,7 @@ fun SetupScreen(onComplete: () -> Unit) {
                     ScanOptions().apply {
                         setPrompt("Scan setup QR from gateway admin website")
                         setBeepEnabled(false)
+                        setOrientationLocked(true)
                     },
                 )
             },
