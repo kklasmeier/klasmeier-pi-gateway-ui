@@ -84,7 +84,19 @@ class SettingsRepository(private val context: Context) {
     }
 
     suspend fun notificationPrefs(): NotificationPrefs {
+        migrateLegacyQuietHoursIfNeeded()
         return notificationPrefsFrom(context.dataStore.data.first())
+    }
+
+    suspend fun migrateLegacyQuietHoursIfNeeded() {
+        val prefs = context.dataStore.data.first()
+        val start = prefs[Keys.QUIET_START_MINUTES] ?: return
+        val end = prefs[Keys.QUIET_END_MINUTES] ?: DEFAULT_QUIET_END
+        if (start == LEGACY_QUIET_START && end == DEFAULT_QUIET_END) {
+            context.dataStore.edit { edit ->
+                edit[Keys.QUIET_START_MINUTES] = DEFAULT_QUIET_START
+            }
+        }
     }
 
     suspend fun snapshot(): SettingsSnapshot {
@@ -116,8 +128,9 @@ class SettingsRepository(private val context: Context) {
     }
 
     companion object {
-        const val DEFAULT_QUIET_START = 23 * 60
+        const val DEFAULT_QUIET_START = 3 * 60
         const val DEFAULT_QUIET_END = 7 * 60
+        private const val LEGACY_QUIET_START = 23 * 60
 
         fun parseSetupJson(raw: String): SetupPayload {
             val json = JSONObject(raw.trim())

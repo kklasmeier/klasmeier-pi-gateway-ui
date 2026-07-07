@@ -41,6 +41,7 @@ class MainActivity : ComponentActivity() {
 
                 LaunchedEffect(configured) {
                     if (configured) {
+                        settingsRepository.migrateLegacyQuietHoursIfNeeded()
                         mainViewModel.refresh()
                         PathMonitor.start(applicationContext)
                         if (

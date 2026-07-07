@@ -2,7 +2,6 @@ package com.klasmeier.internetgatewaypath.ui.main
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -17,10 +16,14 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -38,70 +41,88 @@ import com.klasmeier.internetgatewaypath.data.db.TransitionEntity
 import java.text.DateFormat
 import java.util.Date
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(
     viewModel: MainViewModel,
     onOpenSettings: () -> Unit,
 ) {
     val state by viewModel.uiState.collectAsState()
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = stringResource(R.string.app_name),
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                    text = stringResource(R.string.app_version_label, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            IconButton(onClick = onOpenSettings) {
-                Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.settings_title))
-            }
-        }
-
-        if (state.loading && state.current == null) {
-            CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
-        }
-
-        val display = state.current ?: state.previous
-        if (display != null) {
-            PathCard(result = display, dimmed = state.current?.path == InternetPath.CHECK_FAILED)
-        }
-
-        Button(
-            onClick = viewModel::refresh,
-            enabled = !state.loading,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Icon(Icons.Default.Refresh, contentDescription = null)
-            Text(stringResource(R.string.refresh), modifier = Modifier.padding(start = 8.dp))
-        }
-
-        state.error?.let {
-            Text(it, color = MaterialTheme.colorScheme.error)
-        }
-
-        if (state.transitions.isNotEmpty()) {
-            Text(
-                text = stringResource(R.string.recent_changes),
-                style = MaterialTheme.typography.titleMedium,
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Column {
+                        Text(
+                            text = stringResource(R.string.app_name),
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            text = stringResource(
+                                R.string.app_version_label,
+                                BuildConfig.VERSION_NAME,
+                                BuildConfig.VERSION_CODE,
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                },
+                actions = {
+                    IconButton(onClick = onOpenSettings) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = stringResource(R.string.settings_title),
+                            tint = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface,
+                ),
             )
-            state.transitions.forEach { transition ->
-                TransitionRow(transition)
+        },
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            if (state.loading && state.current == null) {
+                CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
+            }
+
+            val display = state.current ?: state.previous
+            if (display != null) {
+                PathCard(result = display, dimmed = state.current?.path == InternetPath.CHECK_FAILED)
+            }
+
+            Button(
+                onClick = viewModel::refresh,
+                enabled = !state.loading,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(Icons.Default.Refresh, contentDescription = null)
+                Text(stringResource(R.string.refresh), modifier = Modifier.padding(start = 8.dp))
+            }
+
+            state.error?.let {
+                Text(it, color = MaterialTheme.colorScheme.error)
+            }
+
+            if (state.transitions.isNotEmpty()) {
+                Text(
+                    text = stringResource(R.string.recent_changes),
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                state.transitions.forEach { transition ->
+                    TransitionRow(transition)
+                }
             }
         }
     }
