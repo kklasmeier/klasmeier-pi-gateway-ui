@@ -20,10 +20,27 @@ class PathCheckRepository(
 ) {
     private val database = database ?: AppDatabase.get(context)
     private val transitionDao = database.transitionDao()
-    private var lastPath: InternetPath? = null
 
     suspend fun recentTransitions(limit: Int = 20): List<TransitionEntity> {
         return transitionDao.recent(limit)
+    }
+
+    suspend fun recalibrateReferenceIps(): Result<ReferenceIps> = withContext(Dispatchers.IO) {
+        val settings = settingsRepository.snapshot()
+        if (!settings.configured) {
+            return@withContext Result.failure(IllegalStateException("App not configured"))
+        }
+        val localNetwork = classifier.probeLocalNetwork(context, settings.homeSsid)
+        if (!localNetwork.mightReachGateway) {
+            return@withContext Result.failure(
+                IllegalStateException("Connect to home WiFi or home access VPN first"),
+            )
+        }
+        val egress = gatewayClient.fetchEgress(settings.gatewayUrl!!, settings.token!!, refresh = true)
+            ?: return@withContext Result.failure(IllegalStateException("Gateway unreachable"))
+        val reference = ReferenceIps(homeIp = egress.homeIp, obscuraIp = egress.obscuraIp)
+        settingsRepository.saveReferenceIps(reference)
+        Result.success(reference)
     }
 
     suspend fun runCheck(): PathCheckResult = withContext(Dispatchers.IO) {
@@ -73,18 +90,19 @@ class PathCheckRepository(
             clientPath = clientPath,
         )
 
-        maybeRecordTransition(result)
+        recordTransitionIfNeeded(result)
         pruneHistory()
         result
     }
 
-    private suspend fun maybeRecordTransition(result: PathCheckResult) {
+    private suspend fun recordTransitionIfNeeded(result: PathCheckResult) {
         val path = result.path
         if (path == InternetPath.CHECK_FAILED || path == InternetPath.UNKNOWN) {
             return
         }
-        val previous = lastPath
-        lastPath = path
+        val previousName = settingsRepository.getLastPath()
+        val previous = previousName?.let { runCatching { InternetPath.valueOf(it) }.getOrNull() }
+        settingsRepository.setLastPath(path.name)
         if (previous != null && previous != path) {
             transitionDao.insert(
                 TransitionEntity(

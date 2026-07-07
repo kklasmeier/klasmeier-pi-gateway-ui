@@ -26,4 +26,7 @@ interface TransitionDao {
 
     @Query("DELETE FROM transitions WHERE occurredAtEpochMs < :cutoffEpochMs")
     suspend fun deleteOlderThan(cutoffEpochMs: Long)
+
+    @Query("DELETE FROM transitions")
+    suspend fun deleteAll()
 }
