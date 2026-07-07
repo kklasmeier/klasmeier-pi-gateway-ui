@@ -1,6 +1,7 @@
 package com.klasmeier.internetgatewaypath.widget
 
 import android.content.Context
+import androidx.glance.appwidget.updateAll
 import com.klasmeier.internetgatewaypath.data.InternetPath
 import com.klasmeier.internetgatewaypath.data.PathCheckResult
 import com.klasmeier.internetgatewaypath.data.SettingsRepository
