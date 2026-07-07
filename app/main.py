@@ -7,7 +7,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
-from app import config
+from app import config, mobile_setup
 
 app = FastAPI(title="Klasmeier Pi Gateway UI", version="1.0.0")
 security = HTTPBasic()
@@ -110,6 +110,15 @@ def gateway_ui(_: str = Depends(verify_ui_user)):
 @app.get("/home-vpn", response_class=HTMLResponse)
 def home_vpn_ui(_: str = Depends(verify_ui_user)):
     return _read_static("vpn.html")
+
+
+@app.get("/api/mobile-setup")
+def get_mobile_setup(
+    device_ip: str | None = None,
+    device_label: str | None = None,
+    _: str = Depends(verify_ui_user),
+):
+    return mobile_setup.mobile_setup_response(device_ip=device_ip, device_label=device_label)
 
 
 @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
