@@ -19,8 +19,8 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
 data class NotificationPrefs(
     val notificationsEnabled: Boolean = true,
     val quietHoursEnabled: Boolean = true,
-    val quietStartMinutes: Int = DEFAULT_QUIET_START,
-    val quietEndMinutes: Int = DEFAULT_QUIET_END,
+    val quietStartMinutes: Int = SettingsRepository.DEFAULT_QUIET_START,
+    val quietEndMinutes: Int = SettingsRepository.DEFAULT_QUIET_END,
 )
 
 class SettingsRepository(private val context: Context) {
@@ -110,8 +110,8 @@ class SettingsRepository(private val context: Context) {
         return NotificationPrefs(
             notificationsEnabled = prefs[Keys.NOTIFICATIONS_ENABLED] ?: true,
             quietHoursEnabled = prefs[Keys.QUIET_HOURS_ENABLED] ?: true,
-            quietStartMinutes = prefs[Keys.QUIET_START_MINUTES] ?: DEFAULT_QUIET_START,
-            quietEndMinutes = prefs[Keys.QUIET_END_MINUTES] ?: DEFAULT_QUIET_END,
+            quietStartMinutes = prefs[Keys.QUIET_START_MINUTES] ?: SettingsRepository.DEFAULT_QUIET_START,
+            quietEndMinutes = prefs[Keys.QUIET_END_MINUTES] ?: SettingsRepository.DEFAULT_QUIET_END,
         )
     }
 
