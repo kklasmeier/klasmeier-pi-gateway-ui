@@ -19,9 +19,30 @@ data class NetworkContext(
     val gatewayMatches: Boolean,
     val vpnActive: Boolean,
     val gatewayReachable: Boolean,
-)
+) {
+    /** True when the gateway LAN API could plausibly be reachable (home WiFi or home VPN). */
+    val mightReachGateway: Boolean
+        get() = vpnActive || onHomeLan
+}
 
 class PathClassifier {
+    fun probeLocalNetwork(context: Context, homeSsid: String?): NetworkContext {
+        val wifiSsid = currentWifiSsid(context)
+        val localIp = primaryIpv4()
+        val onHomeLanIp = localIp?.startsWith("192.168.1.") == true
+        val ssidMatches = !homeSsid.isNullOrBlank() &&
+            wifiSsid?.equals(homeSsid, ignoreCase = true) == true
+        val onHomeLan = onHomeLanIp && (homeSsid.isNullOrBlank() || ssidMatches)
+        return NetworkContext(
+            wifiSsid = wifiSsid,
+            localIp = localIp,
+            onHomeLan = onHomeLan,
+            gatewayMatches = onHomeLan,
+            vpnActive = isVpnActive(context),
+            gatewayReachable = false,
+        )
+    }
+
     fun buildNetworkContext(
         context: Context,
         homeSsid: String?,

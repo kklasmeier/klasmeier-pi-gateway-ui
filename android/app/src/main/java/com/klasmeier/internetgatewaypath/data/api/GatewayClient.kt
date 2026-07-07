@@ -24,6 +24,11 @@ class GatewayClient(
         .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(12, TimeUnit.SECONDS)
         .build(),
+    private val probeClient: OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(2, TimeUnit.SECONDS)
+        .readTimeout(2, TimeUnit.SECONDS)
+        .callTimeout(3, TimeUnit.SECONDS)
+        .build(),
 ) {
     fun fetchClientPath(gatewayUrl: String, token: String): ClientPathResult? {
         return getJson("$gatewayUrl/api/client-path", token)?.let { json ->
@@ -55,7 +60,7 @@ class GatewayClient(
             .header("Authorization", "Bearer $token")
             .build()
         return try {
-            client.newCall(request).execute().use { it.isSuccessful }
+            probeClient.newCall(request).execute().use { it.isSuccessful }
         } catch (_: Exception) {
             false
         }

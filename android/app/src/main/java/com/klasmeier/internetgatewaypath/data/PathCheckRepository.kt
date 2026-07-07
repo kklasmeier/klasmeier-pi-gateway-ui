@@ -34,7 +34,13 @@ class PathCheckRepository(
 
         val gatewayUrl = settings.gatewayUrl!!
         val token = settings.token!!
-        val reachable = gatewayClient.isReachable(gatewayUrl, token)
+
+        val localNetwork = classifier.probeLocalNetwork(context, settings.homeSsid)
+        val reachable = if (localNetwork.mightReachGateway) {
+            gatewayClient.isReachable(gatewayUrl, token)
+        } else {
+            false
+        }
 
         var homeIp = settings.homeIp
         var obscuraIp = settings.obscuraIp
@@ -58,12 +64,7 @@ class PathCheckRepository(
             null
         }
 
-        val network = classifier.buildNetworkContext(
-            context = context,
-            homeSsid = settings.homeSsid,
-            gatewayIp = settings.gatewayIp,
-            gatewayReachable = reachable,
-        )
+        val network = localNetwork.copy(gatewayReachable = reachable)
 
         val result = classifier.classify(
             ipInfo = ipInfo,
