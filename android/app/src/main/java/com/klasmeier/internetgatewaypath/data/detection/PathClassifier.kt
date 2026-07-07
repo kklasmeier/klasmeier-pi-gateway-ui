@@ -15,52 +15,38 @@ import java.net.NetworkInterface
 data class NetworkContext(
     val wifiSsid: String?,
     val localIp: String?,
+    val onHomeSubnet: Boolean,
     val onHomeLan: Boolean,
     val gatewayMatches: Boolean,
     val vpnActive: Boolean,
+    val wifiConnected: Boolean,
+    val onCellular: Boolean,
     val gatewayReachable: Boolean,
 ) {
-    /** True when the gateway LAN API could plausibly be reachable (home WiFi or home VPN). */
+    /** True when the gateway LAN API could plausibly be reachable (home subnet or home VPN). */
     val mightReachGateway: Boolean
-        get() = vpnActive || onHomeLan
+        get() = vpnActive || onHomeSubnet || onHomeLan
 }
 
 class PathClassifier {
     fun probeLocalNetwork(context: Context, homeSsid: String?): NetworkContext {
         val wifiSsid = currentWifiSsid(context)
         val localIp = primaryIpv4()
-        val onHomeLanIp = localIp?.startsWith("192.168.1.") == true
+        val onHomeSubnet = localIp?.startsWith("192.168.1.") == true
         val ssidMatches = !homeSsid.isNullOrBlank() &&
             wifiSsid?.equals(homeSsid, ignoreCase = true) == true
-        val onHomeLan = onHomeLanIp && (homeSsid.isNullOrBlank() || ssidMatches)
+        val onHomeLan = onHomeSubnet && (homeSsid.isNullOrBlank() || ssidMatches)
+        val (wifiConnected, onCellular) = activeTransports(context)
         return NetworkContext(
             wifiSsid = wifiSsid,
             localIp = localIp,
+            onHomeSubnet = onHomeSubnet,
             onHomeLan = onHomeLan,
             gatewayMatches = onHomeLan,
             vpnActive = isVpnActive(context),
+            wifiConnected = wifiConnected,
+            onCellular = onCellular,
             gatewayReachable = false,
-        )
-    }
-
-    fun buildNetworkContext(
-        context: Context,
-        homeSsid: String?,
-        gatewayIp: String?,
-        gatewayReachable: Boolean,
-    ): NetworkContext {
-        val wifiSsid = currentWifiSsid(context)
-        val localIp = primaryIpv4()
-        val onHomeLan = localIp?.startsWith("192.168.1.") == true
-        val ssidMatches = !homeSsid.isNullOrBlank() &&
-            wifiSsid?.equals(homeSsid, ignoreCase = true) == true
-        return NetworkContext(
-            wifiSsid = wifiSsid,
-            localIp = localIp,
-            onHomeLan = onHomeLan && (homeSsid.isNullOrBlank() || ssidMatches),
-            gatewayMatches = !gatewayIp.isNullOrBlank() && onHomeLan,
-            vpnActive = isVpnActive(context),
-            gatewayReachable = gatewayReachable,
         )
     }
 
@@ -81,13 +67,15 @@ class PathClassifier {
         val path = when {
             publicIp != null && obscuraIp != null && publicIp == obscuraIp -> InternetPath.OBSCURA
             publicIp != null && homeIp != null && publicIp == homeIp &&
-                network.onHomeLan && network.gatewayReachable -> InternetPath.HOME
-            publicIp != null && homeIp != null && publicIp == homeIp &&
                 network.vpnActive && network.gatewayReachable -> InternetPath.OBSCURA
-            publicIp != null && homeIp != null && publicIp == homeIp -> InternetPath.PHONE
+            publicIp != null && homeIp != null && publicIp == homeIp &&
+                !network.vpnActive && network.gatewayReachable &&
+                (network.onHomeLan || network.onHomeSubnet) -> InternetPath.HOME
+            publicIp != null && homeIp != null && publicIp == homeIp &&
+                !network.vpnActive && !network.onHomeSubnet && !network.wifiConnected -> InternetPath.PHONE
             publicIp != null && homeIp != null && publicIp != homeIp &&
                 obscuraIp != null && publicIp != obscuraIp -> InternetPath.PHONE
-            publicIp != null && !network.mightReachGateway -> InternetPath.PHONE
+            publicIp != null && network.onCellular && !network.vpnActive && !network.wifiConnected -> InternetPath.PHONE
             else -> InternetPath.UNKNOWN
         }
 
@@ -105,8 +93,11 @@ class PathClassifier {
 
         val details = buildList {
             if (network.vpnActive) add("VPN transport active")
+            if (network.wifiConnected) add("WiFi connected")
+            if (network.onCellular) add("Cellular active")
             network.wifiSsid?.let { add("WiFi: $it") }
             network.localIp?.let { add("Local IP: $it") }
+            if (network.onHomeSubnet) add("On home subnet")
             if (network.gatewayReachable) add("Gateway reachable") else add("Gateway not reachable")
             clientPath?.connection?.let { add("Gateway sees: $it") }
             clientPath?.policy?.let { add("Policy: $it") }
@@ -148,11 +139,21 @@ class PathClassifier {
         return caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
     }
 
+    private fun activeTransports(context: Context): Pair<Boolean, Boolean> {
+        val cm = context.getSystemService(ConnectivityManager::class.java) ?: return false to false
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false to false
+        val wifi = caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+        val cellular = caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
+        return wifi to cellular
+    }
+
     @Suppress("DEPRECATION")
     private fun currentWifiSsid(context: Context): String? {
         val wifi = context.applicationContext.getSystemService(WifiManager::class.java) ?: return null
         val ssid = wifi.connectionInfo?.ssid ?: return null
-        return ssid.trim('"').ifBlank { null }
+        val trimmed = ssid.trim('"').ifBlank { null }
+        if (trimmed.equals("<unknown ssid>", ignoreCase = true)) return null
+        return trimmed
     }
 
     private fun primaryIpv4(): String? {
