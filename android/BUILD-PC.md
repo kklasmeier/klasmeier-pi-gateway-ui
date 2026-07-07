@@ -83,13 +83,26 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 Use **home WiFi** so the app can reach the gateway at `192.168.1.100`.
 
-The admin QR page is **not built yet** — use **manual setup** in the app:
+### QR setup (recommended)
 
-1. Open **Internet Gateway Path**.
-2. Either **paste setup JSON** or fill in the manual fields.
-3. Tap through setup; then tap **Refresh now**.
+1. On a PC browser (home LAN): open **http://192.168.1.26:8000/gateway/#mobile-app** (admin login).
+2. On the phone: open **Internet Gateway Path** → **Scan setup QR**.
+3. Point the camera at the QR on the admin page.
 
-### Setup JSON template
+Nav: **Mobile app** in the gateway admin sidebar. Device detail also has **Show setup QR** for a labeled phone.
+
+**One-time on PiSensors** — add to `/etc/pivpngateway-ui/ui.env`:
+
+```bash
+HOME_WIFI_SSID=YourExactWiFiName
+IPINFO_TOKEN=your-ipinfo-token
+```
+
+Then `cd ~/klasmeier-pi-gateway-ui && ./gitsync.sh && ./deploy.sh`
+
+### Manual setup (fallback)
+
+Expand **Enter manually** in the app, or paste JSON:
 
 Replace placeholders with your values (same token as PiSensors / gateway `api.env`):
 
@@ -162,7 +175,7 @@ curl -s -H "Authorization: Bearer YOUR_TOKEN" \
 |-------|--------|
 | 1 — Core check, history, manual setup | **In progress** (this build) |
 | 2 — Widget + change alerts | Not started |
-| 3 — Admin website QR (Settings → Mobile app) | Not started — manual JSON works for testing |
+| 3 — Admin website QR (Mobile app nav) | **Done** — deploy UI on PiSensors |
 
 ---
 
