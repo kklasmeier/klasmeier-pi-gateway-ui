@@ -87,6 +87,7 @@ class PathClassifier {
             publicIp != null && homeIp != null && publicIp == homeIp -> InternetPath.PHONE
             publicIp != null && homeIp != null && publicIp != homeIp &&
                 obscuraIp != null && publicIp != obscuraIp -> InternetPath.PHONE
+            publicIp != null && !network.mightReachGateway -> InternetPath.PHONE
             else -> InternetPath.UNKNOWN
         }
 

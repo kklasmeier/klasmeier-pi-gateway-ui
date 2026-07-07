@@ -19,6 +19,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -82,6 +83,18 @@ fun MainScreen(
         ) {
             Icon(Icons.Default.Refresh, contentDescription = null)
             Text(stringResource(R.string.refresh), modifier = Modifier.padding(start = 8.dp))
+        }
+
+        OutlinedButton(
+            onClick = onOpenSettings,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Icon(Icons.Default.Settings, contentDescription = null)
+            Text(stringResource(R.string.settings_title), modifier = Modifier.padding(start = 8.dp))
+        }
+
+        state.error?.let {
+            Text(it, color = MaterialTheme.colorScheme.error)
         }
 
         if (state.transitions.isNotEmpty()) {

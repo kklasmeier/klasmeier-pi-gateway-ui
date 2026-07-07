@@ -41,6 +41,7 @@ class MainActivity : ComponentActivity() {
 
                 LaunchedEffect(configured) {
                     if (configured) {
+                        mainViewModel.refresh()
                         PathMonitor.start(applicationContext)
                         if (
                             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&

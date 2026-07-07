@@ -27,7 +27,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
 
     init {
-        refresh()
         loadHistory()
     }
 
@@ -36,18 +35,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.value = _uiState.value.copy(loading = true, error = null)
             try {
                 val result = PathMonitor.runCheckAndNotify(getApplication())
-                    ?: PathCheckResult(
-                        path = InternetPath.CHECK_FAILED,
-                        publicIp = null,
-                        location = null,
-                        latitude = null,
-                        longitude = null,
-                        connectionDetail = emptyList(),
-                        expectedPath = null,
-                        policyMismatch = false,
-                        checkedAtEpochMs = System.currentTimeMillis(),
-                        errorMessage = "Check failed",
-                    )
+                if (result == null) {
+                    _uiState.value = _uiState.value.copy(loading = false)
+                    return@launch
+                }
                 _uiState.value = _uiState.value.copy(
                     loading = false,
                     previous = _uiState.value.current?.takeIf { result.path != InternetPath.CHECK_FAILED },
