@@ -13,6 +13,7 @@
     <string name="setup_scan_qr">Scan setup QR</string>
     <string name="setup_manual">Enter manually</string>
     <string name="connection_detail">Connection</string>
+    <string name="map_attribution">© OpenStreetMap contributors</string>
     <string name="settings_title">Settings</string>
     <string name="settings_notifications_section">Notifications</string>
     <string name="settings_notify_changes">Notify on path changes</string>

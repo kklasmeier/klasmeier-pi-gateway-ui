@@ -154,6 +154,12 @@ private fun PathCard(result: PathCheckResult, dimmed: Boolean) {
         result.location?.let {
             Text("Location  $it", color = MaterialTheme.colorScheme.onBackground.copy(alpha = alpha))
         }
+        ExitLocationMap(
+            latitude = result.latitude,
+            longitude = result.longitude,
+            locationLabel = result.location,
+            modifier = Modifier.fillMaxWidth(),
+        )
         Text(
             text = "${stringResource(R.string.last_checked)}  ${formatTime(result.checkedAtEpochMs)}",
             style = MaterialTheme.typography.bodySmall,

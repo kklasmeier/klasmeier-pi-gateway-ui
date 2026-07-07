@@ -21,12 +21,12 @@ APK: `app/build/outputs/apk/debug/app-debug.apk`
 
 | Phase | Status |
 |-------|--------|
-| 1 — Core check, history, QR setup, settings, recalibrate | **Done** (map + custom icons deferred) |
+| 1 — Core check, history, QR setup, settings, recalibrate, map | **Done** (custom icons deferred) |
 | 2 — Change alerts (WorkManager, NetworkCallback, quiet hours) | **Done** |
 | 2b — Glance home-screen widgets | Not started |
 | 3 — Admin QR page on PiSensors | **Done** |
 
-**Deferred to later:** OSMDroid map, custom friendly icons, Glance widgets, full history screen.
+**Deferred to later:** custom friendly icons, Glance widgets, full history screen.
 
 ## Related
 
