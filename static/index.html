@@ -17,6 +17,7 @@
     header { display:flex; justify-content:space-between; align-items:center; padding:12px 20px; background:var(--panel); border-bottom:1px solid #30363d; }
     .pill { display:inline-block; padding:4px 10px; border-radius:999px; font-size:12px; margin-left:8px; background:#21262d; }
     #header-status .pill.bad { color:var(--red); border:1px solid var(--red); background:rgba(248,81,73,0.12); font-weight:600; }
+    #header-status .pill.warn-pill { color:var(--amber); border:1px solid var(--amber); background:rgba(210,153,34,0.12); font-weight:600; }
     .ok { color:var(--green); } .bad { color:var(--red); } .warn { color:var(--amber); }
     nav { width:220px; background:var(--panel); min-height:calc(100vh - 56px); padding:16px; border-right:1px solid #30363d; }
     nav a { display:block; color:var(--text); text-decoration:none; padding:8px 10px; border-radius:6px; margin-bottom:4px; }
@@ -188,6 +189,7 @@
       <a href="#devices" data-page="devices">Devices</a>
       <a href="#throughput" data-page="throughput">Throughput</a>
       <a href="#settings" data-page="settings">Settings</a>
+      <a href="#maintenance" data-page="maintenance">Maintenance</a>
       <a href="#mobile-app" data-page="mobile-app">Mobile app</a>
       <hr style="border-color:#30363d;margin:16px 0 8px">
       <div class="nav-section-label">Home Access</div>
@@ -219,6 +221,8 @@ let devicePollTimer;
 let presencePollTimer;
 let dashboardReady = false;
 let throughputReady = false;
+let maintenanceReady = false;
+let maintStatusCache = null;
 let dashboardNeedsBackfill = true;
 let tpNeedsBackfill = true;
 let tpRange = '5m';
@@ -440,10 +444,14 @@ function updateHeaderStatus(status) {
   const obscuraText = obscuraOk
     ? 'Connected'
     : (status.kill_switch_active ? 'Down · kill switch' : 'Down');
-  document.getElementById('header-status').innerHTML =
+  let html =
     pill('Gateway', status.gateway_online !== false, 'Online') +
     pill('Obscura', obscuraOk, obscuraText) +
     pill('dnsmasq', status.dnsmasq_running, status.dnsmasq_running ? 'Running' : 'Stopped');
+  if (status.vpn_suspended) {
+    html += `<span class="pill warn-pill" title="Whole-house VPN suspended from the Maintenance page">⏸ VPN suspended</span>`;
+  }
+  document.getElementById('header-status').innerHTML = html;
   if (status.dnsmasq_running) {
     hideHeaderDiagnostics();
   } else {
@@ -1018,6 +1026,179 @@ async function saveSettings() {
   };
   await api('/settings', { method:'PUT', body: JSON.stringify(body) });
   alert('Settings saved and applied');
+}
+
+const MAINT_UNITS = [
+  {
+    unit: 'dnsmasq',
+    key: 'dnsmasq',
+    title: 'DHCP / DNS (dnsmasq)',
+    activeField: 'dnsmasq_active',
+    stopWarn: 'Stopping this disables LAN DHCP/DNS from the Pi. Make sure the Nighthawk (or another DHCP server) is already handling DHCP before you stop this — otherwise devices may lose network access when their lease expires.',
+  },
+  {
+    unit: 'wg-quick@wg0',
+    key: 'wg0',
+    title: 'Obscura tunnel (wg0)',
+    activeField: 'wg0_active',
+    stopWarn: 'Stopping this drops the outbound VPN tunnel. Routed devices lose internet immediately (kill switch) until you start it again or use "Suspend whole-house VPN" below, which also switches routed devices to local internet.',
+  },
+  {
+    unit: 'wg-quick@wg1',
+    key: 'wg1',
+    title: 'Inbound VPN (wg1)',
+    activeField: 'wg1_active',
+    stopWarn: 'Stopping this disconnects every remote-access VPN client (phones/laptops connecting in from outside the house) until you start it again.',
+  },
+];
+
+function maintUnitByKey(key) {
+  return MAINT_UNITS.find(m => m.key === key);
+}
+
+function renderMaintenanceShell() {
+  document.getElementById('content').innerHTML = `
+    <h1>Maintenance</h1>
+    <p class="card-sub" style="margin-top:0">Safely stop or restart gateway services, and temporarily suspend the whole-house VPN without losing your per-device settings.</p>
+    <div class="cards">
+      ${MAINT_UNITS.map(m => `
+        <div class="card">
+          <h3>${esc(m.title)}</h3>
+          <p id="maint-${m.key}-status">—</p>
+          <div class="row" style="margin-top:10px">
+            <button type="button" id="maint-${m.key}-btn" onclick="maintToggleService('${m.key}')">—</button>
+          </div>
+          <div id="maint-${m.key}-diag"></div>
+        </div>`).join('')}
+    </div>
+    <div class="card" style="margin-bottom:20px">
+      <h3>Whole-house VPN suspend</h3>
+      <p class="card-sub" id="maint-vpn-suspend-desc" style="margin-top:0">Loading…</p>
+      <div id="maint-vpn-suspend-body">—</div>
+    </div>
+    <div class="card">
+      <div class="section-head"><h3 style="margin:0">Recent maintenance actions</h3></div>
+      <ul class="backup-lines" id="maint-log"><li class="card-sub">Loading…</li></ul>
+    </div>`;
+  maintenanceReady = true;
+}
+
+function renderVpnSuspendBody(status) {
+  const descEl = document.getElementById('maint-vpn-suspend-desc');
+  const bodyEl = document.getElementById('maint-vpn-suspend-body');
+  if (!descEl || !bodyEl) return;
+  if (status.vpn_suspended) {
+    descEl.textContent = `Suspended ${fmtRelative(status.suspended_at)} (${fmtDate(status.suspended_at)}). Routed devices are temporarily on local internet and the Obscura tunnel is stopped.`;
+    bodyEl.innerHTML = `
+      ${status.suspended_reason ? `<p class="card-sub">Reason: ${esc(status.suspended_reason)}</p>` : ''}
+      <button type="button" id="maint-vpn-restore-btn" onclick="maintRestoreVpn()">Restore VPN to previous state</button>`;
+  } else {
+    descEl.textContent = `Temporarily stop the Obscura tunnel and switch all ${status.routed_device_count} currently-routed device(s) to local internet. Use this during an outage instead of editing each device — Restore puts everything back exactly as it was.`;
+    bodyEl.innerHTML = `<button type="button" class="danger" id="maint-vpn-suspend-btn" onclick="maintSuspendVpn()">Suspend whole-house VPN</button>`;
+  }
+}
+
+function maintLogLineHtml(entry) {
+  return `<li><span class="card-sub">${esc(fmtDate(entry.at))}</span> — <strong>${esc(entry.action)}</strong>${entry.detail ? ' · ' + esc(entry.detail) : ''}</li>`;
+}
+
+function renderMaintenanceLog(entries) {
+  const el = document.getElementById('maint-log');
+  if (!el) return;
+  el.innerHTML = (entries && entries.length)
+    ? entries.map(maintLogLineHtml).join('')
+    : '<li class="card-sub">No maintenance actions recorded yet.</li>';
+}
+
+function refreshMaintenanceView(status) {
+  maintStatusCache = status;
+  for (const m of MAINT_UNITS) {
+    const active = !!status[m.activeField];
+    const statusEl = document.getElementById(`maint-${m.key}-status`);
+    const btn = document.getElementById(`maint-${m.key}-btn`);
+    if (statusEl) statusEl.innerHTML = `<span class="${active ? 'ok' : 'bad'}">${active ? 'Running' : 'Stopped'}</span>`;
+    if (btn) {
+      btn.textContent = active ? 'Stop' : 'Start';
+      btn.className = active ? 'danger' : '';
+    }
+    const diagEl = document.getElementById(`maint-${m.key}-diag`);
+    if (diagEl) {
+      if (active) diagEl.innerHTML = '';
+      else loadServiceDiagnostics(m.unit, `maint-${m.key}-diag`, `${m.title} is stopped — recovery steps`);
+    }
+  }
+  renderVpnSuspendBody(status);
+}
+
+async function maintToggleService(key) {
+  const meta = maintUnitByKey(key);
+  if (!meta || !maintStatusCache) return;
+  const active = !!maintStatusCache[meta.activeField];
+  const action = active ? 'stop' : 'start';
+  const msg = active
+    ? `Stop ${meta.title}? ${meta.stopWarn}`
+    : `Start ${meta.title}?`;
+  if (!confirm(msg)) return;
+  const btn = document.getElementById(`maint-${key}-btn`);
+  setBtnBusy(btn, true, action === 'stop' ? 'Stopping…' : 'Starting…');
+  document.getElementById('error').textContent = '';
+  try {
+    await api(`/services/${encodeURIComponent(meta.unit)}/control`, {
+      method: 'POST',
+      body: JSON.stringify({ action }),
+    });
+    showStatus(`${meta.title} ${action === 'stop' ? 'stopped' : 'started'}`);
+    await loadMaintenance();
+  } catch (e) {
+    setBtnBusy(btn, false);
+    document.getElementById('error').textContent = e.message;
+  }
+}
+
+async function maintSuspendVpn() {
+  const reasonInput = prompt('Optional note for why you are suspending the VPN (saved in the maintenance log below):', '');
+  if (reasonInput === null) return;
+  if (!confirm('Suspend the whole-house VPN? Routed devices will switch to local internet and the Obscura tunnel will stop. Use Restore afterwards to bring everything back.')) return;
+  const btn = document.getElementById('maint-vpn-suspend-btn');
+  setBtnBusy(btn, true, 'Suspending…');
+  document.getElementById('error').textContent = '';
+  try {
+    await api('/maintenance/vpn/suspend', { method: 'POST', body: JSON.stringify({ reason: reasonInput }) });
+    showStatus('VPN suspended — routed devices switched to local internet');
+    await loadMaintenance();
+  } catch (e) {
+    setBtnBusy(btn, false);
+    document.getElementById('error').textContent = e.message;
+  }
+}
+
+async function maintRestoreVpn() {
+  if (!confirm('Restore the VPN? This restarts the Obscura tunnel and switches previously-routed devices back to routed.')) return;
+  const btn = document.getElementById('maint-vpn-restore-btn');
+  setBtnBusy(btn, true, 'Restoring…');
+  document.getElementById('error').textContent = '';
+  try {
+    await api('/maintenance/vpn/restore', { method: 'POST' });
+    showStatus('VPN restored');
+    await loadMaintenance();
+  } catch (e) {
+    setBtnBusy(btn, false);
+    document.getElementById('error').textContent = e.message;
+  }
+}
+
+async function loadMaintenance() {
+  dashboardReady = false;
+  throughputReady = false;
+  devicesPageReady = false;
+  if (!maintenanceReady) renderMaintenanceShell();
+  const [status, log] = await Promise.all([
+    api('/maintenance/status'),
+    api('/maintenance/log?limit=25').catch(() => []),
+  ]);
+  if (routeHash() !== 'maintenance') return;
+  refreshMaintenanceView(status);
+  renderMaintenanceLog(log);
 }
 
 async function loadMobileApp() {
@@ -2047,6 +2228,7 @@ async function route() {
   if (prev.startsWith('device-') && !hash.startsWith('device-')) invalidateDeviceDetailSession();
   if (prev === 'dashboard' && hash !== 'dashboard') invalidateDashboardSession();
   if (prev === 'throughput' && hash !== 'throughput') invalidateThroughputSession();
+  if (prev === 'maintenance' && hash !== 'maintenance') maintenanceReady = false;
   route._prevHash = hash;
 
   if (hash === 'vpn-clients' || hash.startsWith('vpn-client-')) {
@@ -2062,6 +2244,13 @@ async function route() {
     if (hash.startsWith('device-')) return await loadDevice(hash.replace('device-',''));
     if (hash === 'mobile-app') return await loadMobileApp();
     if (hash === 'settings') return await loadSettings();
+    if (hash === 'maintenance') {
+      await loadMaintenance();
+      pollTimer = setInterval(() => {
+        if (routeHash() === 'maintenance') loadMaintenance();
+      }, POLL_MS);
+      return;
+    }
     if (hash === 'devices') {
       await Promise.all([
         loadDevices({ force: !devicesPageReady }),
