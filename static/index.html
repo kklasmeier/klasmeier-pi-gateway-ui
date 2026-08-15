@@ -1120,6 +1120,8 @@ function refreshMaintenanceView(status) {
     if (btn) {
       btn.textContent = active ? 'Stop' : 'Start';
       btn.className = active ? 'danger' : '';
+      btn.disabled = false;
+      delete btn.dataset.prevLabel;
     }
     const diagEl = document.getElementById(`maint-${m.key}-diag`);
     if (diagEl) {
