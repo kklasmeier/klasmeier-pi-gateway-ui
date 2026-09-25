@@ -59,16 +59,6 @@ class PathCheckRepository(
             false
         }
 
-        var homeIp = settings.homeIp
-        var obscuraIp = settings.obscuraIp
-        if (reachable && (homeIp.isNullOrBlank() || obscuraIp.isNullOrBlank())) {
-            gatewayClient.fetchEgress(gatewayUrl, token, refresh = true)?.let { egress ->
-                homeIp = egress.homeIp ?: homeIp
-                obscuraIp = egress.obscuraIp ?: obscuraIp
-                settingsRepository.saveReferenceIps(ReferenceIps(homeIp, obscuraIp))
-            }
-        }
-
         val ipInfo = try {
             ipInfoClient.fetch(settings.ipinfoToken)
         } catch (exc: Exception) {
@@ -79,6 +69,20 @@ class PathCheckRepository(
             gatewayClient.fetchClientPath(gatewayUrl, token)
         } else {
             null
+        }
+
+        // Obscura exit IPs rotate. Prefer live gateway values over the ones saved at
+        // setup time so a new exit is not misclassified as Phone Internet.
+        var homeIp = settings.homeIp
+        var obscuraIp = settings.obscuraIp
+        homeIp = clientPath?.homeIp ?: homeIp
+        obscuraIp = clientPath?.obscuraIp ?: obscuraIp
+        if (reachable) {
+            gatewayClient.fetchEgress(gatewayUrl, token, refresh = true)?.let { egress ->
+                homeIp = egress.homeIp ?: homeIp
+                obscuraIp = egress.obscuraIp ?: obscuraIp
+                settingsRepository.saveReferenceIps(ReferenceIps(homeIp, obscuraIp))
+            }
         }
 
         val network = localNetwork.copy(gatewayReachable = reachable)

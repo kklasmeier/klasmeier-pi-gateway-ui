@@ -61,6 +61,7 @@ class PathClassifier {
             .joinToString(", ")
             .ifBlank { null }
 
+        // Caller should pass freshly refreshed reference IPs; client-path is a fallback only.
         val homeIp = reference.homeIp ?: clientPath?.homeIp
         val obscuraIp = reference.obscuraIp ?: clientPath?.obscuraIp
 
