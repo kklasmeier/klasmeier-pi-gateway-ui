@@ -517,13 +517,14 @@ function dnsRenewHintHtml(d, settings) {
   const nd = settings?.network_defaults || settings || {};
   const hours = d.reserved ? (nd.dhcp_reserved_lease_hours || 24) : (nd.dhcp_dynamic_lease_hours || 4);
   const link = (d.link_type || '').toLowerCase();
+  const target = d.effective_use_pihole ? 'Pi-hole DNS' : 'public DNS';
   let how = 'Renew the DHCP lease on this device (toggle Wi‑Fi off/on on phones, or release/renew on computers).';
   if (link.includes('5') || link.includes('2.4') || link.includes('wifi')) {
     how = 'Toggle Wi‑Fi off and on on this device.';
   } else if (link.includes('wired')) {
     how = 'Unplug and replug Ethernet, or run a DHCP renew on the device.';
   }
-  return `<div class="renew-hint">DNS settings changed — renew DHCP to apply Pi-hole. ${how} Otherwise updates within about ${hours}h when the lease renews.</div>`;
+  return `<div class="renew-hint">Gateway DHCP policy is set to <strong>${target}</strong>, but this device has not renewed since the change — it may still be using old DNS until then. ${how} Otherwise within about ${hours}h on natural lease renew.</div>`;
 }
 
 function fmtEgressLine(info) {
@@ -1464,17 +1465,21 @@ function piholeToggleHtml(d) {
   const on = !!d.effective_use_pihole;
   const canToggle = d.reserved && !gwLocked;
   const pendingCls = d.dns_renew_pending ? ' renew-pending' : '';
-  const pendingTitle = d.dns_renew_pending ? ' — renew DHCP to apply DNS' : '';
+  const pendingTitle = d.dns_renew_pending
+    ? ' — configured on gateway; renew DHCP on device to apply'
+    : '';
   if (gwLocked) {
-    return `<span class="toggle on disabled${pendingCls}" title="Pi-hole DNS active (gateway)">●</span>`;
+    return `<span class="toggle on disabled${pendingCls}" title="Configured: Pi-hole DNS (gateway)">●</span>`;
   }
   if (!canToggle) {
-    const title = on ? 'Pi-hole DNS active' : 'Public DNS (reserve to enable Pi-hole option)';
+    const title = on ? 'Configured: Pi-hole DNS' : 'Configured: Public DNS (reserve to enable Pi-hole)';
     return `<span class="toggle ${on ? 'on' : 'off'} disabled${pendingCls}" title="${title}${pendingTitle}">${on ? '●' : '○'}</span>`;
   }
   const cls = on ? 'on' : 'off';
   const sym = on ? '●' : '○';
-  const title = on ? 'Pi-hole DNS active — click for public DNS' : 'Public DNS — click for Pi-hole';
+  const title = on
+    ? 'Configured: Pi-hole DNS — click for public DNS'
+    : 'Configured: Public DNS — click for Pi-hole';
   return `<span class="toggle ${cls}${pendingCls}" onclick="toggleGridPihole('${d.ip}', ${!on}, event)" title="${title}${pendingTitle}">${sym}</span>`;
 }
 
@@ -1504,7 +1509,11 @@ async function toggleGridPihole(ip, usePihole, event) {
   document.getElementById('error').textContent = '';
   try {
     await api('/devices/' + ip, { method:'PUT', body: JSON.stringify({ use_pihole: usePihole }) });
-    showStatus(`Pi-hole DNS ${usePihole ? 'enabled' : 'disabled'} — renew DHCP on device to apply DNS`);
+    showStatus(
+      usePihole
+        ? 'Gateway configured for Pi-hole DNS — toggle Wi‑Fi / renew DHCP on the device to apply'
+        : 'Gateway configured for public DNS — toggle Wi‑Fi / renew DHCP on the device to apply'
+    );
     await loadDevices({ force: true });
   } catch (e) {
     setCellBusy(row, '.pihole-cell', false);
@@ -1809,12 +1818,18 @@ async function loadDevices({ force = false } = {}) {
 function dnsLabel(d, settings) {
   if (!settings) return '—';
   const n = settings.network_defaults || settings;
+  let servers;
   if (d.effective_use_pihole) {
     const sec = n.pihole_dns_secondary ? ` / ${n.pihole_dns_secondary}` : '';
-    return `${n.pihole_dns_primary}${sec}`;
+    servers = `${n.pihole_dns_primary}${sec}`;
+  } else {
+    const sec = n.default_public_dns_secondary ? ` / ${n.default_public_dns_secondary}` : '';
+    servers = `${n.default_public_dns_primary}${sec}`;
   }
-  const sec = n.default_public_dns_secondary ? ` / ${n.default_public_dns_secondary}` : '';
-  return `${n.default_public_dns_primary}${sec}`;
+  if (d.dns_renew_pending) {
+    return `${servers} (gateway policy — awaiting device DHCP renew)`;
+  }
+  return `${servers} (gateway DHCP policy)`;
 }
 
 function renderDeviceDetailShell(ip) {
@@ -1900,8 +1915,8 @@ function renderDeviceDetailContent(d, tp, settings, ip) {
           <div><dt>First seen</dt><dd>${fmtDate(d.first_seen_at)}</dd></div>
           <div><dt>Last renew</dt><dd>${fmtDate(d.last_renewed_at)}</dd></div>
           <div><dt>Lease expires</dt><dd>${fmtDate(d.lease_expires_at)} <span class="card-sub">(${fmtRelative(d.lease_expires_at)})</span></dd></div>
-          <div><dt>DNS servers (active)</dt><dd>${esc(dnsActive)}</dd></div>
-          <div><dt>Traffic path (active)</dt><dd>${routeLabel}</dd></div>
+          <div><dt>DNS servers</dt><dd>${esc(dnsActive)}</dd></div>
+          <div><dt>Traffic path</dt><dd>${routeLabel}</dd></div>
           <div><dt>MAC</dt><dd>${esc(d.mac)}</dd></div>
           <div><dt>Network status</dt><dd>${fmtStatusLabel(d.connected)}</dd></div>
           ${d.recently_joined && d.network_joined_at ? `<div><dt>Joined network</dt><dd>${fmtDate(d.network_joined_at)} <span class="card-sub">(${fmtRelative(d.network_joined_at)})</span></dd></div>` : ''}
@@ -1913,8 +1928,8 @@ function renderDeviceDetailContent(d, tp, settings, ip) {
     </div>
     <div class="card">
       <div class="row"><label for="device-hostname">Hostname</label>
-        <input id="device-hostname" type="text" autocomplete="off" spellcheck="false" maxlength="64">
-        <p class="card-sub" style="margin:6px 0 0">Shown in the device list${d.reserved ? ' and written to the DHCP reservation' : ''}. Does not change the OS hostname on the device.</p>
+        <input id="device-hostname" type="text" autocomplete="off" spellcheck="false" maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9_-]*" title="Letters, digits, hyphen, underscore only (no spaces)">
+        <p class="card-sub" style="margin:6px 0 0">Letters, digits, hyphen, underscore only (no spaces). Shown in the device list${d.reserved ? ' and written to the DHCP reservation' : ''}. Does not change the OS hostname on the device.</p>
       </div>
       <div class="row">
         <label>Internet Gateway Path (phone app)</label>
@@ -1935,7 +1950,8 @@ function renderDeviceDetailContent(d, tp, settings, ip) {
       </div>
       <div class="row"><label>Pi-hole DNS</label>
         ${gatewayLocked ? `<p style="color:var(--muted);font-size:13px;margin:0 0 8px">Gateway node — Pi-hole DNS always on.</p>` : ''}
-        ${policyLocked ? `<p style="color:var(--muted);font-size:13px;margin:0 0 8px">Public DNS is active until this device is reserved.</p>` : ''}
+        ${policyLocked ? `<p style="color:var(--muted);font-size:13px;margin:0 0 8px">Public DNS until this device is reserved.</p>` : ''}
+        <p class="card-sub" style="margin:0 0 8px">This sets the <strong>gateway DHCP policy</strong>. The device keeps using its current DNS until it renews DHCP (toggle Wi‑Fi).</p>
         <div class="radio-group">
           <label class="option ${gatewayLocked || policyLocked ? 'disabled' : ''}"><input type="radio" name="pihole" value="true" ${piholeOnChecked} ${gatewayLocked || policyLocked ? 'disabled' : ''}> Pi-hole DNS (.11 / .4)</label>
           <label class="option ${gatewayLocked || policyLocked ? 'disabled' : ''}"><input type="radio" name="pihole" value="false" ${piholeOffChecked} ${gatewayLocked || policyLocked ? 'disabled' : ''}> Public DNS</label>
@@ -2010,6 +2026,11 @@ async function saveDevice(ip, event) {
     document.getElementById('error').textContent = 'Hostname is required.';
     return;
   }
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(hostname)) {
+    document.getElementById('error').textContent =
+      'Hostname may only use letters, digits, hyphen, and underscore (no spaces).';
+    return;
+  }
   setBtnBusy(btn, true, 'Saving…');
   document.getElementById('error').textContent = '';
   await paintUi();
@@ -2021,7 +2042,7 @@ async function saveDevice(ip, event) {
   };
   try {
     await api('/devices/' + ip, { method:'PUT', body: JSON.stringify(body) });
-    showStatus(`Saved ${hostname} — renew DHCP on this device if you changed DNS`);
+    showStatus(`Saved ${hostname} — if DNS changed, renew DHCP on the device (toggle Wi‑Fi) to apply`);
     sessionStorage.setItem('highlightIp', ip);
     location.hash = 'devices';
   } catch (e) {
